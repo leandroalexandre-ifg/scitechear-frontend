@@ -18,7 +18,7 @@ class ReunioesApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Reunião Inteligente',
+      title: 'SciTech Ear',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.dark,
       home: authService.isLoggedIn

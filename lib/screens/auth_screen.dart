@@ -112,14 +112,14 @@ class _AuthScreenState extends State<AuthScreen> {
               ),
             ],
           ),
-          child: const Icon(Icons.mic_rounded, color: Colors.white, size: 30),
+          child: const Icon(Icons.hearing_rounded, color: Colors.white, size: 30),
         )
             .animate()
             .fadeIn(duration: 500.ms)
             .slideY(begin: -0.4, curve: Curves.easeOutCubic),
         const SizedBox(height: 24),
         Text(
-          'Reunião\nInteligente',
+          'SciTech\nEar',
           style: GoogleFonts.inter(
             fontSize: 38,
             fontWeight: FontWeight.w800,

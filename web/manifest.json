@@ -1,6 +1,6 @@
 {
-    "name": "app",
-    "short_name": "app",
+    "name": "SciTech Ear",
+    "short_name": "SciTech Ear",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",
