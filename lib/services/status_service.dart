@@ -19,11 +19,21 @@ class StatusService {
   /// extracting, done, error.
   Stream<String> watchStatus(String jobId) {
     final controller = StreamController<String>();
+    _connectWebSocket(jobId, controller);
+    return controller.stream;
+  }
 
+  Future<void> _connectWebSocket(
+    String jobId,
+    StreamController<String> controller,
+  ) async {
     try {
       _channel = WebSocketChannel.connect(
         Uri.parse('${AppConfig.backendWsUrl}/ws/$jobId'),
       );
+      // A conexão do WebSocket é assíncrona; `ready` só completa (ou lança)
+      // depois do handshake, então é aqui que falhas de conexão aparecem.
+      await _channel!.ready;
 
       _channel!.stream.listen(
         (message) {
@@ -44,8 +54,6 @@ class StatusService {
     } catch (_) {
       _pollStatus(jobId, controller);
     }
-
-    return controller.stream;
   }
 
   /// Polling de status a cada 3s como alternativa ao WebSocket.

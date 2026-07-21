@@ -19,4 +19,18 @@ class Participant {
     voiceSamplePath: voiceSamplePath ?? this.voiceSamplePath,
     colorIndex: colorIndex,
   );
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'voiceSamplePath': voiceSamplePath,
+    'colorIndex': colorIndex,
+  };
+
+  factory Participant.fromJson(Map<String, dynamic> json) => Participant(
+    id: json['id'] as String,
+    name: json['name'] as String,
+    voiceSamplePath: json['voiceSamplePath'] as String?,
+    colorIndex: json['colorIndex'] as int? ?? 0,
+  );
 }

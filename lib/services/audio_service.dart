@@ -16,11 +16,13 @@ class AudioService {
 
   Future<bool> hasPermission() => _recorder.hasPermission();
 
-  Future<String> start({String? filename}) async {
+  Future<String> start({String? filename, bool persistent = false}) async {
     if (!await _recorder.hasPermission()) {
       throw Exception('Permissão de microfone negada.');
     }
-    final dir = await getTemporaryDirectory();
+    final dir = persistent
+        ? await getApplicationDocumentsDirectory()
+        : await getTemporaryDirectory();
     final name = filename ?? 'rec_${DateTime.now().millisecondsSinceEpoch}';
     final path = '${dir.path}/$name.wav';
 

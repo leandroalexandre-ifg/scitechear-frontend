@@ -5,9 +5,11 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:record/record.dart';
 import '../core/theme/app_colors.dart';
+import '../models/meeting.dart';
 import '../models/participant.dart';
 import '../services/audio_service.dart';
 import '../services/background_service.dart';
+import '../services/meeting_service.dart';
 import '../services/upload_service.dart';
 import '../widgets/participant_avatar.dart';
 import 'processing_screen.dart';
@@ -31,6 +33,7 @@ class _RecordingScreenState extends State<RecordingScreen>
   final _audio = AudioService();
   final _background = BackgroundService();
   final _uploader = UploadService();
+  final _history = MeetingHistoryService();
 
   bool _isRecording = false;
   bool _isUploading = false;
@@ -40,7 +43,7 @@ class _RecordingScreenState extends State<RecordingScreen>
   StreamSubscription<Amplitude>? _ampSub;
 
   // Waveform: 50 barras de amplitude normalizada
-  final List<double> _bars = List.filled(50, 0.02);
+  final List<double> _bars = List<double>.generate(50, (_) => 0.02);
 
   late AnimationController _pulseCtrl;
   late AnimationController _stopBtnCtrl;
@@ -149,6 +152,14 @@ class _RecordingScreenState extends State<RecordingScreen>
           if (mounted) setState(() => _uploadProgress = p);
         },
       );
+      await _history.add(Meeting(
+        id: DateTime.now().microsecondsSinceEpoch.toString(),
+        jobId: jobId,
+        title: widget.meetingTitle ?? 'Reunião sem título',
+        createdAt: DateTime.now(),
+        participantNames: widget.participants.map((p) => p.name).toList(),
+      ));
+
       if (!mounted) return;
       setState(() => _isUploading = false);
       Navigator.pushReplacement(

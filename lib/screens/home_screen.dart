@@ -2,18 +2,116 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/theme/app_colors.dart';
+import '../models/meeting.dart';
+import '../models/participant.dart';
 import '../services/auth_service.dart';
+import '../services/meeting_service.dart';
+import '../services/status_service.dart';
 import '../widgets/glass_card.dart';
 import 'auth_screen.dart';
 import 'meeting_setup_screen.dart';
+import 'participants_screen.dart';
+import 'result_screen.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   final AuthService authService;
   const HomeScreen({super.key, required this.authService});
 
   @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  final _history = MeetingHistoryService();
+  final _status = StatusService();
+  List<Meeting> _meetings = [];
+  bool _loading = true;
+  String? _openingMeetingId;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMeetings();
+  }
+
+  @override
+  void dispose() {
+    _status.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadMeetings() async {
+    final list = await _history.loadAll();
+    if (!mounted) return;
+    setState(() {
+      _meetings = list;
+      _loading = false;
+    });
+  }
+
+  Future<void> _openMeeting(Meeting meeting) async {
+    setState(() => _openingMeetingId = meeting.id);
+    try {
+      final result = await _status.fetchResult(meeting.jobId);
+      if (!mounted) return;
+      final participants = meeting.participantNames
+          .asMap()
+          .entries
+          .map((e) => Participant(
+                id: e.key.toString(),
+                name: e.value,
+                colorIndex: e.key,
+              ))
+          .toList();
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ResultScreen(result: result, participants: participants),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Não foi possível buscar a reunião: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _openingMeetingId = null);
+    }
+  }
+
+  Future<void> _removeMeeting(Meeting meeting) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('Remover reunião?',
+            style: TextStyle(color: AppColors.textPrimary)),
+        content: Text(
+          '"${meeting.title}" será removida do seu histórico local.',
+          style: const TextStyle(color: AppColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Remover',
+                style: TextStyle(color: AppColors.error)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await _history.remove(meeting.id);
+      await _loadMeetings();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final user = authService.currentUser!;
+    final user = widget.authService.currentUser!;
     final firstName = user.name.split(' ').first;
 
     return Scaffold(
@@ -26,51 +124,74 @@ class HomeScreen extends StatelessWidget {
           ),
         ),
         child: SafeArea(
-          child: CustomScrollView(
-            slivers: [
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-                  child: _buildHeader(context, firstName, user.email),
-                ),
-              ),
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 28, 24, 0),
-                  child: _buildNewMeetingCard(context),
-                ),
-              ),
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 36, 24, 16),
-                  child: Row(
-                    children: [
-                      Text(
-                        'Reuniões recentes',
-                        style: GoogleFonts.inter(
-                          color: AppColors.textPrimary,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 18,
-                        ),
-                      ),
-                    ],
+          child: RefreshIndicator(
+            onRefresh: _loadMeetings,
+            color: AppColors.primary,
+            backgroundColor: AppColors.surfaceHigh,
+            child: CustomScrollView(
+              slivers: [
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+                    child: _buildHeader(context, firstName),
                   ),
                 ),
-              ),
-              SliverFillRemaining(
-                hasScrollBody: false,
-                child: _buildEmptyState(),
-              ),
-            ],
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 28, 24, 0),
+                    child: _buildNewMeetingCard(context),
+                  ),
+                ),
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(24, 36, 24, 16),
+                    child: Row(
+                      children: [
+                        Text(
+                          'Reuniões recentes',
+                          style: GoogleFonts.inter(
+                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 18,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                if (_loading)
+                  const SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Center(
+                      child: CircularProgressIndicator(color: AppColors.primary),
+                    ),
+                  )
+                else if (_meetings.isEmpty)
+                  SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: _buildEmptyState(),
+                  )
+                else
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
+                    sliver: SliverList.builder(
+                      itemCount: _meetings.length,
+                      itemBuilder: (_, i) => Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: _buildMeetingCard(_meetings[i], i),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildHeader(
-      BuildContext context, String firstName, String email) {
-    final user = authService.currentUser!;
+  Widget _buildHeader(BuildContext context, String firstName) {
+    final user = widget.authService.currentUser!;
     return Row(
       children: [
         Expanded(
@@ -123,10 +244,32 @@ class HomeScreen extends StatelessWidget {
           ),
         ),
         GestureDetector(
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const ParticipantsScreen()),
+          ),
+          child: Container(
+            width: 42,
+            height: 42,
+            margin: const EdgeInsets.only(left: 10),
+            decoration: BoxDecoration(
+              color: AppColors.surfaceHigh,
+              borderRadius: BorderRadius.circular(13),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: const Icon(
+              Icons.groups_rounded,
+              color: AppColors.textSecondary,
+              size: 19,
+            ),
+          ),
+        ),
+        GestureDetector(
           onTap: () => _logout(context),
           child: Container(
             width: 42,
             height: 42,
+            margin: const EdgeInsets.only(left: 10),
             decoration: BoxDecoration(
               color: AppColors.surfaceHigh,
               borderRadius: BorderRadius.circular(13),
@@ -145,12 +288,15 @@ class HomeScreen extends StatelessWidget {
 
   Widget _buildNewMeetingCard(BuildContext context) {
     return GestureDetector(
-      onTap: () => Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => MeetingSetupScreen(authService: authService),
-        ),
-      ),
+      onTap: () async {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => MeetingSetupScreen(authService: widget.authService),
+          ),
+        );
+        _loadMeetings();
+      },
       child: Container(
         padding: const EdgeInsets.all(24),
         decoration: BoxDecoration(
@@ -239,6 +385,87 @@ class HomeScreen extends StatelessWidget {
     ).animate(delay: 100.ms).fadeIn(duration: 500.ms).slideY(begin: 0.25);
   }
 
+  Widget _buildMeetingCard(Meeting meeting, int index) {
+    final opening = _openingMeetingId == meeting.id;
+    return GlassCard(
+      onTap: opening ? null : () => _openMeeting(meeting),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+      child: Row(
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: AppColors.primary.withAlpha(30),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.description_rounded,
+                color: AppColors.primary, size: 20),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  meeting.title,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.inter(
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 15,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  meeting.participantNames.isEmpty
+                      ? _fmtDate(meeting.createdAt)
+                      : '${_fmtDate(meeting.createdAt)} · ${meeting.participantNames.join(', ')}',
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.inter(
+                    color: AppColors.textSecondary,
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (opening)
+            const SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                  strokeWidth: 2, color: AppColors.primary),
+            )
+          else
+            GestureDetector(
+              onTap: () => _removeMeeting(meeting),
+              child: Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: AppColors.error.withAlpha(30),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.delete_outline_rounded,
+                    color: AppColors.error, size: 17),
+              ),
+            ),
+        ],
+      ),
+    ).animate(delay: (index * 60).ms).fadeIn().slideX(begin: 0.1);
+  }
+
+  String _fmtDate(DateTime d) {
+    final now = DateTime.now();
+    final sameDay =
+        d.year == now.year && d.month == now.month && d.day == now.day;
+    final time =
+        '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+    if (sameDay) return 'Hoje, $time';
+    return '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')} · $time';
+  }
+
   Widget _buildEmptyState() {
     return Center(
       child: Padding(
@@ -288,12 +515,12 @@ class HomeScreen extends StatelessWidget {
   }
 
   Future<void> _logout(BuildContext context) async {
-    await authService.logout();
+    await widget.authService.logout();
     if (!context.mounted) return;
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(
-        builder: (_) => AuthScreen(authService: authService),
+        builder: (_) => AuthScreen(authService: widget.authService),
       ),
     );
   }
