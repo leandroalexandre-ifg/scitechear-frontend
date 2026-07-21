@@ -1,17 +1,136 @@
-# app
+# SciTech Ear
 
-A new Flutter project.
+App Flutter (cliente fino) para gravar reuniões, enviá-las a um backend de IA e exibir a transcrição com identificação de falantes e as perguntas extraídas automaticamente.
 
-## Getting Started
+Todo o processamento pesado (transcrição, diarização, extração de perguntas) roda no backend — o app apenas grava, envia e exibe o resultado.
 
-This project is a starting point for a Flutter application.
+## Arquitetura
 
-A few resources to get you started if this is your first Flutter project:
+```
+SciTech Ear (Flutter, este repositório)
+  └── Grava áudio WAV 16 kHz mono
+  └── Envia via HTTP multipart para o backend
+  └── Acompanha o status do job (WebSocket, com fallback para polling)
+  └── Exibe transcrição (com falantes) + perguntas extraídas
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+Backend (repositório separado — ainda não implementado)
+  └── FastAPI
+  └── Whisper   → transcrição
+  └── pyannote  → diarização (identificação de falantes)
+  └── Ollama    → extração de perguntas a partir da transcrição
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Funcionalidades
+
+- **Login** com conta fixa pré-cadastrada (`leandro` / `leandro`, administrador) ou cadastro dinâmico de qualquer usuário/senha (mock local, sem backend de auth ainda)
+- **Configuração da reunião**: título e lista de participantes, cada um podendo gravar uma amostra de voz (usada pelo backend para diarização)
+- **Gravação**: captura de áudio em WAV 16 kHz mono, com visualização de forma de onda em tempo real, funcionando em segundo plano com a tela bloqueada
+- **Processamento**: upload multipart do áudio + amostras de voz, com acompanhamento do status (`queued` → `transcribing` → `diarizing` → `extracting` → `done`/`error`)
+- **Resultado**: transcrição com marcação de falante e tempo, e lista de perguntas identificadas na conversa
+
+## Fluxo de telas
+
+```
+AuthScreen → HomeScreen → MeetingSetupScreen → RecordingScreen → ProcessingScreen → ResultScreen
+```
+
+## Stack técnica
+
+| Área | Pacote/Escolha | Motivo |
+|---|---|---|
+| Gravação de áudio | `record` | Suporta WAV/PCM, funciona em segundo plano, multiplataforma |
+| Execução em segundo plano (Android) | `flutter_background` + `wakelock_plus` | Mantém o áudio ativo com a tela bloqueada |
+| Upload/HTTP | `dio` | Multipart upload com progresso |
+| Status em tempo real | `web_socket_channel` | WebSocket com fallback de polling |
+| Persistência de sessão | `shared_preferences` | Guarda token/usuário localmente |
+| Permissões | `permission_handler` | Microfone e notificações |
+| UI | `google_fonts` (Inter) + `flutter_animate` | Tipografia e animações declarativas |
+
+## Estrutura do projeto
+
+```
+lib/
+  main.dart                       # bootstrap do app + rota inicial (auth ou home)
+  config.dart                     # URLs do backend (HTTP e WebSocket)
+  core/theme/                     # cores e tema (dark) do app
+  models/
+    user.dart                     # AppUser (id, nome, email, isAdmin)
+    participant.dart              # Participante da reunião + amostra de voz
+    meeting_result.dart           # TranscriptSegment, Question, MeetingResult (espelha o JSON do backend)
+  screens/
+    auth_screen.dart               # login / cadastro
+    home_screen.dart               # tela inicial, atalho para nova reunião, logout
+    meeting_setup_screen.dart      # título da reunião + participantes + amostras de voz
+    recording_screen.dart          # gravação com forma de onda em tempo real
+    processing_screen.dart         # upload + acompanhamento de status
+    result_screen.dart             # transcrição e perguntas extraídas
+  services/
+    auth_service.dart              # login/cadastro/logout (mock local via shared_preferences)
+    audio_service.dart             # grava WAV 16kHz mono via `record`
+    background_service.dart        # foreground service (Android) + wakelock
+    upload_service.dart            # upload multipart (áudio + amostras de voz)
+    status_service.dart            # WebSocket/polling de status + busca do resultado
+  widgets/                         # componentes visuais reutilizáveis (glass card, botão gradiente, avatar)
+```
+
+## Configuração do backend
+
+O endereço do backend é definido em `lib/config.dart`:
+
+```dart
+static const String backendBaseUrl = 'http://10.0.2.2:8000';
+static const String backendWsUrl = 'ws://10.0.2.2:8000';
+```
+
+- **Emulador Android**: `10.0.2.2` aponta para o `localhost` da máquina host
+- **Dispositivo físico**: use o IP da máquina na rede local (ex.: `192.168.0.10`)
+- **Produção**: use o domínio com HTTPS/WSS
+
+## Contrato da API esperada (backend ainda não implementado)
+
+```
+POST /upload
+  Content-Type: multipart/form-data
+  Body: file=<wav>, title?, participant_names[]=, voice_samples[]=<wav>
+  Resposta: { "job_id": "uuid" }
+
+GET /status/{job_id}          (fallback de polling)
+WS   /ws/{job_id}             (status em tempo real)
+  Resposta: { "status": "queued|transcribing|diarizing|extracting|done|error" }
+
+GET /resultado/{job_id}
+  Resposta: {
+    "job_id": "uuid",
+    "status": "done",
+    "segments": [{ "speaker": "SPEAKER_00", "start": 0.0, "end": 4.2, "text": "..." }],
+    "questions": [{ "speaker": "SPEAKER_01", "time": 12.5, "text": "..." }]
+  }
+```
+
+## Notas importantes sobre gravação em segundo plano
+
+- **Android**: um foreground service é obrigatório — sem ele, o sistema mata a thread de áudio quando a tela é bloqueada. O `AndroidManifest.xml` declara o serviço com `foregroundServiceType="microphone"` e as permissões `FOREGROUND_SERVICE`/`FOREGROUND_SERVICE_MICROPHONE`. Uma notificação persistente é exibida durante a gravação (exigência do sistema).
+- **iOS**: a categoria da sessão de áudio permite gravação em segundo plano via `UIBackgroundModes` no `Info.plist`.
+- Teste em dispositivo físico ou emulador com bloqueio de tela — alguns emuladores não reproduzem o comportamento de encerramento do sistema.
+
+## Como rodar
+
+```bash
+flutter pub get
+
+# Rodar em um dispositivo conectado (prefira Android físico para testar o foreground service)
+flutter run
+
+# Analisar o código
+flutter analyze
+
+# Rodar os testes
+flutter test
+```
+
+## O que não fazer
+
+- Não adicionar alvos desktop/web como objetivo — eles existem apenas como scaffold do `flutter create`
+- Não processar áudio no dispositivo — todo o ML roda no backend
+- Não armazenar gravações permanentemente no dispositivo — enviar e descartar
+- Não usar o login mock atual como autenticação real de produção — é um placeholder até o backend de auth existir
