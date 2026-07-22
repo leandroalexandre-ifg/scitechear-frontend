@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../core/theme/app_colors.dart';
 import '../models/meeting_result.dart';
 import '../models/participant.dart';
@@ -62,6 +63,88 @@ class _ResultScreenState extends State<ResultScreen>
     return '$m:$s';
   }
 
+  static final _emailRegex = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
+
+  Future<void> _sendQuestionsByEmail() async {
+    final formKey = GlobalKey<FormState>();
+    final emailCtrl = TextEditingController();
+    final recipient = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('Enviar perguntas por e-mail',
+            style: TextStyle(color: AppColors.textPrimary)),
+        content: Form(
+          key: formKey,
+          child: TextFormField(
+            controller: emailCtrl,
+            autofocus: true,
+            keyboardType: TextInputType.emailAddress,
+            style: const TextStyle(color: AppColors.textPrimary, fontSize: 15),
+            decoration: const InputDecoration(
+              labelText: 'E-mail do destinatário',
+              prefixIcon: Icon(Icons.alternate_email_rounded, size: 20),
+            ),
+            validator: (v) => (v == null || !_emailRegex.hasMatch(v.trim()))
+                ? 'Informe um e-mail válido'
+                : null,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              FocusScope.of(ctx).unfocus();
+              Navigator.pop(ctx);
+            },
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () {
+              if (!formKey.currentState!.validate()) return;
+              FocusScope.of(ctx).unfocus();
+              Navigator.pop(ctx, emailCtrl.text.trim());
+            },
+            child: const Text('Enviar',
+                style: TextStyle(color: AppColors.primary)),
+          ),
+        ],
+      ),
+    );
+    emailCtrl.dispose();
+    if (recipient == null || recipient.isEmpty) return;
+
+    final buffer = StringBuffer();
+    for (var i = 0; i < widget.result.questions.length; i++) {
+      final q = widget.result.questions[i];
+      buffer.writeln(
+          '${i + 1}. [${_speakerLabel(q.speaker)} · ${_fmt(q.time)}]');
+      buffer.writeln(q.text);
+      buffer.writeln();
+    }
+
+    // Uri(queryParameters: ...) usa a codificação de formulário
+    // (application/x-www-form-urlencoded), que representa espaço como "+".
+    // Clientes de e-mail interpretam mailto: com percent-encoding (RFC 6068),
+    // então "+" aparece como caractere literal em vez de espaço. Por isso o
+    // corpo é montado manualmente com Uri.encodeComponent (usa %20).
+    final subject = Uri.encodeComponent('Perguntas da reunião');
+    final body = Uri.encodeComponent(buffer.toString().trim());
+    final uri = Uri.parse('mailto:$recipient?subject=$subject&body=$body');
+
+    try {
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok) throw Exception('launch failed');
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível abrir o app de e-mail.'),
+          backgroundColor: AppColors.error,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -77,6 +160,7 @@ class _ResultScreenState extends State<ResultScreen>
           child: Column(
             children: [
               _buildHeader(context),
+              if (widget.result.isDemo) _buildDemoBanner(),
               _buildTabBar(),
               Expanded(
                 child: TabBarView(
@@ -155,7 +239,46 @@ class _ResultScreenState extends State<ResultScreen>
               ],
             ),
           ),
+          IconButton(
+            icon: const Icon(Icons.forward_to_inbox_rounded,
+                color: AppColors.textPrimary, size: 20),
+            tooltip: 'Enviar perguntas por e-mail',
+            onPressed: widget.result.questions.isEmpty
+                ? null
+                : _sendQuestionsByEmail,
+          ),
         ],
+      ),
+    ).animate().fadeIn(duration: 400.ms);
+  }
+
+  Widget _buildDemoBanner() {
+    const color = Color(0xFFF59E0B);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: color.withAlpha(30),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: color.withAlpha(80)),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.info_outline_rounded, color: color, size: 16),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Conteúdo de demonstração — servidor indisponível',
+                style: GoogleFonts.inter(
+                  color: color,
+                  fontWeight: FontWeight.w600,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     ).animate().fadeIn(duration: 400.ms);
   }

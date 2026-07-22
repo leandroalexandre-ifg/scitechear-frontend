@@ -6,6 +6,7 @@ import '../models/meeting.dart';
 import '../models/participant.dart';
 import '../services/auth_service.dart';
 import '../services/meeting_service.dart';
+import '../services/offline_service.dart';
 import '../services/status_service.dart';
 import '../widgets/glass_card.dart';
 import 'auth_screen.dart';
@@ -24,6 +25,7 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final _history = MeetingHistoryService();
   final _status = StatusService();
+  final _resultCache = LocalResultCache();
   List<Meeting> _meetings = [];
   bool _loading = true;
   String? _openingMeetingId;
@@ -52,7 +54,21 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _openMeeting(Meeting meeting) async {
     setState(() => _openingMeetingId = meeting.id);
     try {
-      final result = await _status.fetchResult(meeting.jobId);
+      // Prioriza o resultado já salvo localmente — evita depender da rede
+      // para reabrir reuniões e funciona mesmo com o backend indisponível.
+      var result = await _resultCache.load(meeting.jobId);
+      if (result == null) {
+        try {
+          result = await _status.fetchResult(meeting.jobId);
+          await _resultCache.save(meeting.jobId, result);
+        } catch (_) {
+          result = generateDemoResult(
+            jobId: meeting.jobId,
+            participantNames: meeting.participantNames,
+          );
+          await _resultCache.save(meeting.jobId, result);
+        }
+      }
       if (!mounted) return;
       final participants = meeting.participantNames
           .asMap()
@@ -66,13 +82,8 @@ class _HomeScreenState extends State<HomeScreen> {
       await Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => ResultScreen(result: result, participants: participants),
+          builder: (_) => ResultScreen(result: result!, participants: participants),
         ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Não foi possível buscar a reunião: $e')),
       );
     } finally {
       if (mounted) setState(() => _openingMeetingId = null);
@@ -105,6 +116,51 @@ class _HomeScreenState extends State<HomeScreen> {
     );
     if (confirmed == true) {
       await _history.remove(meeting.id);
+      await _loadMeetings();
+    }
+  }
+
+  Future<void> _renameMeeting(Meeting meeting) async {
+    final ctrl = TextEditingController(text: meeting.title);
+    final newTitle = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('Renomear reunião',
+            style: TextStyle(color: AppColors.textPrimary)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          style: const TextStyle(color: AppColors.textPrimary, fontSize: 15),
+          decoration: const InputDecoration(
+            labelText: 'Título',
+            prefixIcon: Icon(Icons.title_rounded, size: 20),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              FocusScope.of(ctx).unfocus();
+              Navigator.pop(ctx);
+            },
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () {
+              final trimmed = ctrl.text.trim();
+              if (trimmed.isEmpty) return;
+              FocusScope.of(ctx).unfocus();
+              Navigator.pop(ctx, trimmed);
+            },
+            child: const Text('Salvar',
+                style: TextStyle(color: AppColors.primary)),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (newTitle != null && newTitle.isNotEmpty && newTitle != meeting.title) {
+      await _history.update(meeting.copyWith(title: newTitle));
       await _loadMeetings();
     }
   }
@@ -438,18 +494,36 @@ class _HomeScreenState extends State<HomeScreen> {
                   strokeWidth: 2, color: AppColors.primary),
             )
           else
-            GestureDetector(
-              onTap: () => _removeMeeting(meeting),
-              child: Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: AppColors.error.withAlpha(30),
-                  borderRadius: BorderRadius.circular(10),
+            Row(
+              children: [
+                GestureDetector(
+                  onTap: () => _renameMeeting(meeting),
+                  child: Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary.withAlpha(30),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.edit_outlined,
+                        color: AppColors.primary, size: 16),
+                  ),
                 ),
-                child: const Icon(Icons.delete_outline_rounded,
-                    color: AppColors.error, size: 17),
-              ),
+                const SizedBox(width: 8),
+                GestureDetector(
+                  onTap: () => _removeMeeting(meeting),
+                  child: Container(
+                    width: 34,
+                    height: 34,
+                    decoration: BoxDecoration(
+                      color: AppColors.error.withAlpha(30),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(Icons.delete_outline_rounded,
+                        color: AppColors.error, size: 17),
+                  ),
+                ),
+              ],
             ),
         ],
       ),

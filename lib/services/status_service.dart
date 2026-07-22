@@ -57,13 +57,21 @@ class StatusService {
   }
 
   /// Polling de status a cada 3s como alternativa ao WebSocket.
+  ///
+  /// Depois de [_maxConsecutiveFailures] falhas seguidas, desiste e emite
+  /// 'offline' em vez de tentar para sempre — quem escuta o stream deve
+  /// tratar esse status caindo para um resultado local/demonstração.
+  static const _maxConsecutiveFailures = 4;
+
   Future<void> _pollStatus(
     String jobId,
     StreamController<String> controller,
   ) async {
+    var failures = 0;
     while (!controller.isClosed) {
       try {
         final response = await _dio.get('/status/$jobId');
+        failures = 0;
         final status = response.data['status']?.toString() ?? 'unknown';
         controller.add(status);
         if (status == 'done' || status == 'error') {
@@ -71,7 +79,12 @@ class StatusService {
           break;
         }
       } catch (_) {
-        // Mantém tentando; o backend pode estar ocupado.
+        failures++;
+        if (failures >= _maxConsecutiveFailures) {
+          controller.add('offline');
+          await controller.close();
+          break;
+        }
       }
       await Future.delayed(const Duration(seconds: 3));
     }

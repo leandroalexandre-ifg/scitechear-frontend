@@ -35,4 +35,12 @@ class Meeting {
         .map((e) => e.toString())
         .toList(),
   );
+
+  Meeting copyWith({String? title}) => Meeting(
+    id: id,
+    jobId: jobId,
+    title: title ?? this.title,
+    createdAt: createdAt,
+    participantNames: participantNames,
+  );
 }

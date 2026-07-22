@@ -20,6 +20,7 @@ dependencies:
   shared_preferences: ^2.3.0  # persistência de sessão
   google_fonts: ^6.2.1         # tipografia Inter
   flutter_animate: ^4.5.0      # animações declarativas
+  url_launcher: ^6.3.1         # abrir app de e-mail (mailto:)
 
 dev_dependencies:
   flutter_test:

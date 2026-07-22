@@ -37,4 +37,12 @@ class MeetingHistoryService {
     all.removeWhere((m) => m.id == id);
     await _saveAll(all);
   }
+
+  Future<void> update(Meeting meeting) async {
+    final all = await loadAll();
+    final i = all.indexWhere((m) => m.id == meeting.id);
+    if (i == -1) return;
+    all[i] = meeting;
+    await _saveAll(all);
+  }
 }

@@ -10,6 +10,7 @@ import '../models/participant.dart';
 import '../services/audio_service.dart';
 import '../services/background_service.dart';
 import '../services/meeting_service.dart';
+import '../services/offline_service.dart';
 import '../services/upload_service.dart';
 import '../widgets/participant_avatar.dart';
 import 'processing_screen.dart';
@@ -34,6 +35,7 @@ class _RecordingScreenState extends State<RecordingScreen>
   final _background = BackgroundService();
   final _uploader = UploadService();
   final _history = MeetingHistoryService();
+  final _resultCache = LocalResultCache();
 
   bool _isRecording = false;
   bool _isUploading = false;
@@ -143,8 +145,9 @@ class _RecordingScreenState extends State<RecordingScreen>
       _uploadProgress = 0;
     });
 
+    String jobId;
     try {
-      final jobId = await _uploader.uploadMeeting(
+      jobId = await _uploader.uploadMeeting(
         audioPath: path,
         participants: widget.participants,
         title: widget.meetingTitle,
@@ -152,31 +155,36 @@ class _RecordingScreenState extends State<RecordingScreen>
           if (mounted) setState(() => _uploadProgress = p);
         },
       );
-      await _history.add(Meeting(
-        id: DateTime.now().microsecondsSinceEpoch.toString(),
+    } catch (_) {
+      // Backend indisponível: em vez de perder a gravação, salva a reunião
+      // localmente com um resultado de demonstração gerado no dispositivo.
+      jobId = 'local_${DateTime.now().microsecondsSinceEpoch}';
+      final demoResult = generateDemoResult(
         jobId: jobId,
-        title: widget.meetingTitle ?? 'Reunião sem título',
-        createdAt: DateTime.now(),
         participantNames: widget.participants.map((p) => p.name).toList(),
-      ));
-
-      if (!mounted) return;
-      setState(() => _isUploading = false);
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ProcessingScreen(
-            jobId: jobId,
-            participants: widget.participants,
-          ),
-        ),
       );
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isUploading = false);
-        _showSnack('Erro ao enviar o áudio: $e');
-      }
+      await _resultCache.save(jobId, demoResult);
     }
+
+    await _history.add(Meeting(
+      id: DateTime.now().microsecondsSinceEpoch.toString(),
+      jobId: jobId,
+      title: widget.meetingTitle ?? 'Reunião sem título',
+      createdAt: DateTime.now(),
+      participantNames: widget.participants.map((p) => p.name).toList(),
+    ));
+
+    if (!mounted) return;
+    setState(() => _isUploading = false);
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ProcessingScreen(
+          jobId: jobId,
+          participants: widget.participants,
+        ),
+      ),
+    );
   }
 
   void _showSnack(String msg) {

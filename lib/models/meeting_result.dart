@@ -34,6 +34,13 @@ class TranscriptSegment {
       text: json['text'] as String? ?? '',
     );
   }
+
+  Map<String, dynamic> toJson() => {
+    'speaker': speaker,
+    'start': start,
+    'end': end,
+    'text': text,
+  };
 }
 
 /// Uma pergunta extraída da reunião.
@@ -55,6 +62,12 @@ class Question {
       text: json['text'] as String? ?? '',
     );
   }
+
+  Map<String, dynamic> toJson() => {
+    'speaker': speaker,
+    'time': time,
+    'text': text,
+  };
 }
 
 /// Resultado completo do processamento de um job.
@@ -64,11 +77,16 @@ class MeetingResult {
   final List<TranscriptSegment> segments;
   final List<Question> questions;
 
+  /// True quando este resultado foi gerado localmente porque o backend
+  /// estava indisponível, em vez de vir de um processamento real.
+  final bool isDemo;
+
   MeetingResult({
     required this.jobId,
     required this.status,
     required this.segments,
     required this.questions,
+    this.isDemo = false,
   });
 
   factory MeetingResult.fromJson(Map<String, dynamic> json) {
@@ -81,6 +99,15 @@ class MeetingResult {
       questions: (json['questions'] as List<dynamic>? ?? [])
           .map((e) => Question.fromJson(e as Map<String, dynamic>))
           .toList(),
+      isDemo: json['is_demo'] as bool? ?? false,
     );
   }
+
+  Map<String, dynamic> toJson() => {
+    'job_id': jobId,
+    'status': status,
+    'segments': segments.map((s) => s.toJson()).toList(),
+    'questions': questions.map((q) => q.toJson()).toList(),
+    'is_demo': isDemo,
+  };
 }

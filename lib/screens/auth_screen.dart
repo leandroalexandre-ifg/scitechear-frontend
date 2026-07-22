@@ -166,11 +166,29 @@ class _AuthScreenState extends State<AuthScreen> {
           ),
           _field(
             ctrl: _emailCtrl,
-            label: 'E-mail',
+            label: _isLogin ? 'E-mail ou usuário' : 'E-mail',
             icon: Icons.alternate_email_rounded,
-            type: TextInputType.emailAddress,
-            validator: (v) => v!.isEmpty ? 'Informe o e-mail' : null,
+            type: _isLogin ? TextInputType.text : TextInputType.emailAddress,
+            validator: (v) => v!.isEmpty
+                ? (_isLogin ? 'Informe seu e-mail ou usuário' : 'Informe o e-mail')
+                : null,
           ).animate(delay: 220.ms).fadeIn().slideY(begin: 0.3),
+          AnimatedSize(
+            duration: 280.ms,
+            curve: Curves.easeInOut,
+            child: _isLogin
+                ? Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      'Você pode entrar com seu nome de usuário ou e-mail cadastrado.',
+                      style: GoogleFonts.inter(
+                        color: AppColors.textSecondary,
+                        fontSize: 12,
+                      ),
+                    ).animate(delay: 240.ms).fadeIn(),
+                  )
+                : const SizedBox.shrink(),
+          ),
           const SizedBox(height: 14),
           _field(
             ctrl: _passCtrl,
