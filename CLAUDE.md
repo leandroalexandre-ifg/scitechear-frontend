@@ -1,10 +1,12 @@
-# Meeting Recorder — Flutter App
+# SciTech Ear — Flutter App
 
 ## Project overview
 
 Client-side Flutter app for recording meeting audio, uploading to a backend, and displaying transcription and extracted questions. The backend (FastAPI + Whisper + pyannote + Ollama) handles all heavy processing — this app is intentionally a thin client.
 
 **Current focus: Flutter app. Backend comes later.**
+
+Full architecture writeup (system diagram, layer responsibilities, backend contract, open recommendations): [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md) (Portuguese).
 
 ## Architecture
 
@@ -45,9 +47,10 @@ Backend (separate repo — not implemented yet)
 | Concern | Choice | Reason |
 |---|---|---|
 | Audio recording | `record` package | Supports WAV/PCM, background-capable, cross-platform |
-| Foreground service (Android) | `flutter_foreground_task` | Manages Android foreground service lifecycle |
-| HTTP client | `dio` or `http` | Multipart upload + polling |
-| State management | TBD (Riverpod preferred) | Simple enough for Provider too |
+| Foreground service (Android) | `flutter_background` + `wakelock_plus` | Keeps recording alive with the screen locked |
+| HTTP client | `dio` | Multipart upload + polling |
+| Real-time status | `web_socket_channel` | WebSocket first, polling fallback every 3s |
+| State management | None — manual constructor injection | Simple enough at current scale; revisit (Provider/Riverpod) if it grows |
 | Permissions | `permission_handler` | Microphone + notification (required for foreground service) |
 
 ## Android foreground service — critical notes
@@ -57,46 +60,60 @@ Backend (separate repo — not implemented yet)
 - A persistent notification must be shown while recording (system requirement)
 - Test on a physical device or emulator with screen lock — emulator may not reproduce the kill behavior
 
-## File structure (planned)
+## File structure (actual)
 
 ```
 lib/
-  main.dart
-  app.dart                  # MaterialApp + routing
-  features/
-    recording/
-      recording_page.dart
-      recording_controller.dart
-      audio_recorder_service.dart   # wraps `record` package
-      foreground_service_helper.dart
-    upload/
-      upload_service.dart           # multipart POST + polling
-    results/
-      results_page.dart
-      transcript_view.dart
-      questions_view.dart
+  main.dart                     # bootstrap: init auth, decide initial screen
+  config.dart                   # backend HTTP/WS base URLs
+  core/theme/                   # colors + dark theme
   models/
-    job.dart                # JobStatus enum + Job model
-    transcript.dart         # Segment, Speaker
-  shared/
-    api_client.dart         # base URL, headers, error handling
+    user.dart                   # AppUser
+    participant.dart            # Participant + voice sample
+    meeting.dart                # Meeting (title, history)
+    meeting_result.dart         # TranscriptSegment, Question, MeetingResult
+  services/
+    auth_service.dart           # login/signup (local mock)
+    audio_service.dart          # WAV recording via `record`
+    background_service.dart     # foreground service (Android) + wakelock
+    upload_service.dart         # multipart upload
+    status_service.dart         # WebSocket + polling + result fetch
+    meeting_service.dart        # meeting history/persistence
+    participant_service.dart    # participant management
+    offline_service.dart        # offline demo fallback when backend unreachable
+  screens/
+    auth_screen.dart
+    home_screen.dart
+    meeting_setup_screen.dart
+    participants_screen.dart
+    recording_screen.dart
+    processing_screen.dart
+    result_screen.dart
+  widgets/                      # glass card, gradient button, avatar, etc.
 ```
+
+No `features/` layer, no Riverpod — see `docs/ARQUITETURA.md` §3 for why and §7 for when to revisit.
 
 ## Backend API contract (draft — backend not built yet)
 
-```
-POST /jobs
-  Content-Type: multipart/form-data
-  Body: file=<wav bytes>
-  Response 202: { "job_id": "uuid" }
+Routes are in Portuguese; this is what the client actually calls (`lib/services/upload_service.dart`, `status_service.dart`) — treat the code as the source of truth over any older English draft.
 
-GET /jobs/{job_id}
-  Response 200: {
+```
+POST /upload
+  Content-Type: multipart/form-data
+  Body: file=<wav>, title?, participant_names[]=, voice_samples[]=<wav>
+  Response: { "job_id": "uuid" }
+
+GET /status/{job_id}          (polling fallback)
+WS   /ws/{job_id}             (real-time status)
+  Response: { "status": "queued|transcribing|diarizing|extracting|done|error" }
+
+GET /resultado/{job_id}
+  Response: {
     "job_id": "uuid",
-    "status": "queued|transcribing|diarizing|extracting|done|error",
-    "transcript": [{ "speaker": "Speaker 1", "start": 0.0, "end": 3.2, "text": "..." }],
-    "questions": ["...", "..."],
-    "error": null
+    "status": "done",
+    "segments": [{ "speaker": "SPEAKER_00", "start": 0.0, "end": 4.2, "text": "..." }],
+    "questions": [{ "speaker": "SPEAKER_01", "time": 12.5, "text": "..." }]
   }
 ```
 
