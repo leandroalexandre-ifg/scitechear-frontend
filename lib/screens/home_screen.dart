@@ -53,41 +53,78 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _openMeeting(Meeting meeting) async {
     setState(() => _openingMeetingId = meeting.id);
-    try {
-      // Prioriza o resultado já salvo localmente — evita depender da rede
-      // para reabrir reuniões e funciona mesmo com o backend indisponível.
-      var result = await _resultCache.load(meeting.jobId);
-      if (result == null) {
-        try {
-          result = await _status.fetchResult(meeting.jobId);
-          await _resultCache.save(meeting.jobId, result);
-        } catch (_) {
+
+    // Prioriza o resultado já salvo localmente — evita depender da rede
+    // para reabrir reuniões e funciona mesmo com o backend indisponível.
+    var result = await _resultCache.load(meeting.jobId);
+    if (result == null) {
+      try {
+        result = await _status.fetchResult(meeting.jobId);
+        await _resultCache.save(meeting.jobId, result);
+      } catch (_) {
+        if (kDemoModeEnabled) {
+          // Modo demonstração explícito (--dart-define=SCITECH_DEMO_MODE=true).
           result = generateDemoResult(
             jobId: meeting.jobId,
             participantNames: meeting.participantNames,
           );
           await _resultCache.save(meeting.jobId, result);
+        } else {
+          // Erro real: nunca virar resultado fictício silenciosamente.
+          if (!mounted) return;
+          setState(() => _openingMeetingId = null);
+          _showReopenError(meeting);
+          return;
         }
       }
-      if (!mounted) return;
-      final participants = meeting.participantNames
-          .asMap()
-          .entries
-          .map((e) => Participant(
-                id: e.key.toString(),
-                name: e.value,
-                colorIndex: e.key,
-              ))
-          .toList();
-      await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ResultScreen(result: result!, participants: participants),
-        ),
-      );
-    } finally {
-      if (mounted) setState(() => _openingMeetingId = null);
     }
+
+    if (!mounted) return;
+    setState(() => _openingMeetingId = null);
+    final participants = meeting.participantNames
+        .asMap()
+        .entries
+        .map((e) => Participant(
+              id: e.key.toString(),
+              name: e.value,
+              colorIndex: e.key,
+            ))
+        .toList();
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ResultScreen(result: result!, participants: participants),
+      ),
+    );
+  }
+
+  void _showReopenError(Meeting meeting) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('Não foi possível abrir a reunião',
+            style: TextStyle(color: AppColors.textPrimary)),
+        content: const Text(
+          'Não foi possível carregar esta reunião — verifique a conexão com o servidor.',
+          style: TextStyle(color: AppColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Voltar'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _openMeeting(meeting);
+            },
+            child: const Text('Tentar novamente',
+                style: TextStyle(color: AppColors.primary)),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _removeMeeting(Meeting meeting) async {

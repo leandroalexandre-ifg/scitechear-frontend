@@ -9,14 +9,23 @@ import '../models/meeting_result.dart';
 ///
 /// Estratégia: WebSocket em /ws/{job_id} para progresso em tempo real,
 /// com fallback de polling em /status/{job_id} caso o WS falhe.
+///
+/// IMPORTANTE: hoje (backend Fase 7) o WS é só um stub — aceita a conexão,
+/// manda o status atual UMA vez e fecha. O push real de progresso é Fase 8
+/// do backend (ainda não implementada). Por isso `onDone` NÃO pode assumir
+/// que o job terminou só porque o WS fechou: se o último status recebido
+/// não for terminal (done/error), cai para o polling. Não "simplificar"
+/// isso de volta para WS-only até o backend realmente empurrar progresso.
 class StatusService {
   final Dio _dio = Dio(BaseOptions(baseUrl: AppConfig.backendBaseUrl));
   WebSocketChannel? _channel;
 
-  /// Abre um stream de status via WebSocket.
+  /// Abre um stream de status via WebSocket, com fallback de polling.
   ///
-  /// Emite strings de estado: queued, transcribing, diarizing,
-  /// extracting, done, error.
+  /// Emite strings de estado: queued, transcribing, diarizing, identifying,
+  /// summarizing, extracting, done, error. Também pode emitir 'offline' —
+  /// um sinal inventado pelo cliente (nunca enviado pelo backend) quando o
+  /// polling esgota as tentativas e não consegue mais falar com o servidor.
   Stream<String> watchStatus(String jobId) {
     final controller = StreamController<String>();
     _connectWebSocket(jobId, controller);
@@ -27,6 +36,14 @@ class StatusService {
     String jobId,
     StreamController<String> controller,
   ) async {
+    String? lastStatus;
+    var pollingStarted = false;
+    void startPolling() {
+      if (pollingStarted) return;
+      pollingStarted = true;
+      _pollStatus(jobId, controller);
+    }
+
     try {
       _channel = WebSocketChannel.connect(
         Uri.parse('${AppConfig.backendWsUrl}/ws/$jobId'),
@@ -40,19 +57,32 @@ class StatusService {
           try {
             final data = jsonDecode(message as String);
             final status = data is Map ? data['status']?.toString() : null;
-            if (status != null) controller.add(status);
+            if (status != null) {
+              lastStatus = status;
+              controller.add(status);
+            }
           } catch (_) {
+            lastStatus = message.toString();
             controller.add(message.toString());
           }
         },
         onError: (_) {
           // Fallback para polling se o WebSocket falhar.
-          _pollStatus(jobId, controller);
+          startPolling();
         },
-        onDone: () => controller.close(),
+        onDone: () {
+          // O stub do backend fecha a conexão depois de uma única mensagem,
+          // quase sempre não-terminal — tratar isso como "preciso continuar
+          // de outro jeito", não como "o job acabou".
+          if (lastStatus == 'done' || lastStatus == 'error') {
+            controller.close();
+          } else {
+            startPolling();
+          }
+        },
       );
     } catch (_) {
-      _pollStatus(jobId, controller);
+      startPolling();
     }
   }
 
@@ -60,7 +90,8 @@ class StatusService {
   ///
   /// Depois de [_maxConsecutiveFailures] falhas seguidas, desiste e emite
   /// 'offline' em vez de tentar para sempre — quem escuta o stream deve
-  /// tratar esse status caindo para um resultado local/demonstração.
+  /// tratar esse status como um erro real de conectividade, nunca cair
+  /// silenciosamente para um resultado fictício.
   static const _maxConsecutiveFailures = 4;
 
   Future<void> _pollStatus(
@@ -94,6 +125,18 @@ class StatusService {
   Future<MeetingResult> fetchResult(String jobId) async {
     final response = await _dio.get('/resultado/$jobId');
     return MeetingResult.fromJson(response.data as Map<String, dynamic>);
+  }
+
+  /// Busca o corpo completo de GET /status/{job_id}, incluindo `error`
+  /// ({code, message}) quando o job falhou — usado para mostrar a mensagem
+  /// real de erro do backend em vez de um texto genérico.
+  Future<Map<String, dynamic>?> fetchStatusDetail(String jobId) async {
+    try {
+      final response = await _dio.get('/status/$jobId');
+      return response.data as Map<String, dynamic>;
+    } catch (_) {
+      return null;
+    }
   }
 
   /// Encerra o WebSocket.

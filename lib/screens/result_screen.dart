@@ -9,6 +9,10 @@ import '../widgets/glass_card.dart';
 
 class ResultScreen extends StatefulWidget {
   final MeetingResult result;
+
+  /// Não usado para resolver falantes (isso vem pronto do backend em
+  /// `result`). Reservado para uma futura feature de participantes
+  /// cadastrados-mas-não-detectados na reunião.
   final List<Participant> participants;
 
   const ResultScreen({
@@ -37,23 +41,34 @@ class _ResultScreenState extends State<ResultScreen>
     super.dispose();
   }
 
-  // Mapeia "SPEAKER_00" → nome do participante, se disponível.
-  String _speakerLabel(String rawSpeaker) {
-    final index = int.tryParse(
-      RegExp(r'\d+').firstMatch(rawSpeaker)?.group(0) ?? '',
-    );
-    if (index != null && index < widget.participants.length) {
-      return widget.participants[index].name;
-    }
-    return rawSpeaker;
-  }
+  // O backend já resolve falante -> participante (biometria de voz). O
+  // cliente NUNCA deve inferir identidade pela posição do participante na
+  // lista de seleção da reunião — só usa o que veio no resultado.
+  String _segmentLabel(TranscriptSegment s) => s.speaker ?? s.cluster;
 
-  Color _speakerColor(String rawSpeaker) {
-    final index = int.tryParse(
-      RegExp(r'\d+').firstMatch(rawSpeaker)?.group(0) ?? '',
-    );
-    final i = index ?? rawSpeaker.hashCode.abs();
-    return AppColors.participantColors[i % AppColors.participantColors.length];
+  String _questionLabel(Question q) =>
+      q.speaker ?? (q.type == QuestionType.implicit ? 'Pergunta implícita' : 'Não identificado');
+
+  static const _neutralColor = AppColors.textMuted;
+
+  // Cor estável por identidade (participantId, com fallback para o cluster
+  // bruto), nunca por posição na lista — a mesma pessoa mantém a mesma cor
+  // entre as abas de Transcrição e Perguntas.
+  Color _colorForKey(String key) =>
+      AppColors.participantColors[key.hashCode.abs() % AppColors.participantColors.length];
+
+  Color _segmentColor(TranscriptSegment s) =>
+      _colorForKey(s.participantId ?? s.cluster);
+
+  Color _questionColor(Question q) {
+    // Perguntas implícitas nunca têm participant_id/speaker por contrato —
+    // usar cor neutra em vez de "hashar" o texto, que daria uma cor sem
+    // nenhum significado (e teria o mesmo problema que a regra de
+    // biometria já proíbe para nomes: inventar identidade).
+    if (q.type == QuestionType.implicit) return _neutralColor;
+    final key = q.participantId ?? q.speaker;
+    if (key == null) return _neutralColor;
+    return _colorForKey(key);
   }
 
   String _fmt(double seconds) {
@@ -116,8 +131,8 @@ class _ResultScreenState extends State<ResultScreen>
     final buffer = StringBuffer();
     for (var i = 0; i < widget.result.questions.length; i++) {
       final q = widget.result.questions[i];
-      buffer.writeln(
-          '${i + 1}. [${_speakerLabel(q.speaker)} · ${_fmt(q.time)}]');
+      final timeLabel = q.time != null ? _fmt(q.time!) : '—';
+      buffer.writeln('${i + 1}. [${_questionLabel(q)} · $timeLabel]');
       buffer.writeln(q.text);
       buffer.writeln();
     }
@@ -326,8 +341,8 @@ class _ResultScreenState extends State<ResultScreen>
       itemCount: widget.result.segments.length,
       itemBuilder: (_, i) {
         final seg = widget.result.segments[i];
-        final label = _speakerLabel(seg.speaker);
-        final color = _speakerColor(seg.speaker);
+        final label = _segmentLabel(seg);
+        final color = _segmentColor(seg);
         return Padding(
           padding: const EdgeInsets.only(bottom: 14),
           child: GlassCard(
@@ -404,8 +419,8 @@ class _ResultScreenState extends State<ResultScreen>
       itemCount: widget.result.questions.length,
       itemBuilder: (_, i) {
         final q = widget.result.questions[i];
-        final label = _speakerLabel(q.speaker);
-        final color = _speakerColor(q.speaker);
+        final label = _questionLabel(q);
+        final color = _questionColor(q);
         return Padding(
           padding: const EdgeInsets.only(bottom: 14),
           child: GlassCard(
@@ -459,7 +474,7 @@ class _ResultScreenState extends State<ResultScreen>
                           ),
                           const SizedBox(width: 5),
                           Text(
-                            '$label · ${_fmt(q.time)}',
+                            q.time != null ? '$label · ${_fmt(q.time!)}' : label,
                             style: GoogleFonts.inter(
                               color: AppColors.textSecondary,
                               fontSize: 12,

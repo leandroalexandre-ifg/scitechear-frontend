@@ -28,12 +28,18 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
   String _currentStatus = 'queued';
   bool _navigated = false;
 
+  bool _failed = false;
+  String _errorTitle = '';
+  String _errorMessage = '';
+
   static const _steps = [
-    (key: 'queued',       label: 'Na fila',               icon: Icons.hourglass_empty_rounded,    color: AppColors.textSecondary),
-    (key: 'transcribing', label: 'Transcrevendo (Whisper)', icon: Icons.text_fields_rounded,        color: AppColors.primary),
-    (key: 'diarizing',   label: 'Identificando falantes', icon: Icons.record_voice_over_rounded,  color: AppColors.secondary),
-    (key: 'extracting',  label: 'Extraindo perguntas',    icon: Icons.psychology_rounded,         color: Color(0xFFF472B6)),
-    (key: 'done',        label: 'Concluído',              icon: Icons.check_circle_rounded,       color: AppColors.success),
+    (key: 'queued',       label: 'Na fila',                    icon: Icons.hourglass_empty_rounded,    color: AppColors.textSecondary),
+    (key: 'transcribing', label: 'Transcrevendo (Whisper)',     icon: Icons.text_fields_rounded,        color: AppColors.primary),
+    (key: 'diarizing',    label: 'Separando falantes',          icon: Icons.groups_rounded,             color: AppColors.secondary),
+    (key: 'identifying',  label: 'Identificando participantes', icon: Icons.record_voice_over_rounded,  color: Color(0xFFA78BFA)),
+    (key: 'summarizing',  label: 'Gerando resumo',               icon: Icons.summarize_rounded,          color: Color(0xFFFBBF24)),
+    (key: 'extracting',   label: 'Extraindo perguntas',         icon: Icons.psychology_rounded,         color: Color(0xFFF472B6)),
+    (key: 'done',         label: 'Concluído',                   icon: Icons.check_circle_rounded,       color: AppColors.success),
   ];
 
   @override
@@ -49,22 +55,36 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
   }
 
   void _listen() {
-    // Reunião já foi salva localmente (backend indisponível no momento do
-    // envio) — simula as etapas e mostra o resultado de demonstração já
-    // salvo, em vez de tentar falar com um servidor que não existe.
     if (widget.jobId.startsWith('local_')) {
-      _simulateOfflineProcessing();
+      if (kDemoModeEnabled) {
+        // Modo demonstração explícito: reunião já foi salva localmente
+        // (backend indisponível no momento do envio) — simula as etapas e
+        // mostra o resultado de demonstração já salvo.
+        _simulateOfflineProcessing();
+      } else {
+        // Não deveria acontecer fora do modo demo — trata como erro real
+        // em vez de fabricar um resultado.
+        _showError(
+          title: 'Reunião não enviada',
+          message: 'Esta reunião não chegou a ser enviada ao servidor.',
+        );
+      }
       return;
     }
 
     _status.watchStatus(widget.jobId).listen((status) async {
-      if (!mounted) return;
+      if (!mounted || _navigated) return;
       if (status == 'offline') {
-        await _fallbackToDemoResult();
+        _navigated = true;
+        _showError(
+          title: 'Sem conexão com o servidor',
+          message:
+              'Não foi possível verificar o status. Verifique sua conexão e tente novamente.',
+        );
         return;
       }
       setState(() => _currentStatus = status);
-      if (status == 'done' && !_navigated) {
+      if (status == 'done') {
         _navigated = true;
         try {
           final result = await _status.fetchResult(widget.jobId);
@@ -80,26 +100,34 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
             ),
           );
         } catch (_) {
-          await _fallbackToDemoResult();
+          _showError(
+            title: 'Erro ao carregar o resultado',
+            message:
+                'O processamento terminou, mas não foi possível carregar o resultado. Tente novamente.',
+          );
         }
       } else if (status == 'error') {
-        await _fallbackToDemoResult();
+        _navigated = true;
+        final detail = await _status.fetchStatusDetail(widget.jobId);
+        final backendError = detail?['error'];
+        final backendMessage = backendError is Map
+            ? backendError['message']?.toString()
+            : null;
+        _showError(
+          title: 'Falha no processamento',
+          message: backendMessage ?? 'O processamento falhou no servidor.',
+        );
       }
     });
   }
 
   Future<void> _simulateOfflineProcessing() async {
-    for (final step in ['transcribing', 'diarizing', 'extracting', 'done']) {
+    for (final step
+        in ['transcribing', 'diarizing', 'identifying', 'summarizing', 'extracting', 'done']) {
       await Future.delayed(const Duration(milliseconds: 700));
       if (!mounted) return;
       setState(() => _currentStatus = step);
     }
-    await _fallbackToDemoResult();
-  }
-
-  Future<void> _fallbackToDemoResult() async {
-    if (_navigated) return;
-    _navigated = true;
     final cached = await _resultCache.load(widget.jobId);
     final result = cached ??
         generateDemoResult(
@@ -121,6 +149,24 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
     );
   }
 
+  void _showError({required String title, required String message}) {
+    if (!mounted) return;
+    setState(() {
+      _failed = true;
+      _errorTitle = title;
+      _errorMessage = message;
+    });
+  }
+
+  void _retry() {
+    setState(() {
+      _failed = false;
+      _navigated = false;
+      _currentStatus = 'queued';
+    });
+    _listen();
+  }
+
   int get _currentIndex {
     final i = _steps.indexWhere((s) => s.key == _currentStatus);
     return i < 0 ? 0 : i;
@@ -140,21 +186,83 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
         child: SafeArea(
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 24),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const SizedBox(height: 48),
-                _buildHeader(),
-                const SizedBox(height: 48),
-                _buildSteps(),
-                const Spacer(),
-                _buildJobId(),
-                const SizedBox(height: 32),
-              ],
-            ),
+            child: _failed ? _buildErrorView() : _buildProcessingView(),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildProcessingView() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: 48),
+        _buildHeader(),
+        const SizedBox(height: 48),
+        _buildSteps(),
+        const Spacer(),
+        _buildJobId(),
+        const SizedBox(height: 32),
+      ],
+    );
+  }
+
+  Widget _buildErrorView() {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Container(
+          width: 72,
+          height: 72,
+          decoration: BoxDecoration(
+            color: AppColors.error.withAlpha(30),
+            shape: BoxShape.circle,
+          ),
+          child: const Icon(Icons.error_outline_rounded,
+              color: AppColors.error, size: 36),
+        ).animate().fadeIn(duration: 400.ms).scale(),
+        const SizedBox(height: 24),
+        Text(
+          _errorTitle,
+          textAlign: TextAlign.center,
+          style: GoogleFonts.inter(
+            fontSize: 22,
+            fontWeight: FontWeight.w700,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        const SizedBox(height: 10),
+        Text(
+          _errorMessage,
+          textAlign: TextAlign.center,
+          style: GoogleFonts.inter(
+            color: AppColors.textSecondary,
+            fontSize: 14,
+            height: 1.4,
+          ),
+        ),
+        const SizedBox(height: 32),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: _retry,
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: const Text('Tentar novamente'),
+          ),
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: OutlinedButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Voltar'),
+          ),
+        ),
+        const SizedBox(height: 12),
+        _buildJobId(),
+      ],
     );
   }
 

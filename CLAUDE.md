@@ -35,7 +35,7 @@ Backend (separate repo — not implemented yet)
 ### Upload & status polling
 - Single HTTP multipart POST with the WAV file
 - Backend returns a `job_id`; app polls `GET /jobs/{job_id}` until status is `done`
-- Display intermediate states: `queued`, `transcribing`, `diarizing`, `extracting`, `done`, `error`
+- Display intermediate states: `queued`, `transcribing`, `diarizing`, `identifying`, `summarizing`, `extracting`, `done`, `error`
 
 ### Results screen
 - Transcript with speaker labels (Speaker 1, Speaker 2, …)
@@ -94,28 +94,80 @@ lib/
 
 No `features/` layer, no Riverpod — see `docs/ARQUITETURA.md` §3 for why and §7 for when to revisit.
 
-## Backend API contract (draft — backend not built yet)
+## Backend API contract
 
-Routes are in Portuguese; this is what the client actually calls (`lib/services/upload_service.dart`, `status_service.dart`) — treat the code as the source of truth over any older English draft.
+Implemented and tested on the backend (SciTech-backend, separate repo). This
+is what the client actually calls (`lib/services/upload_service.dart`,
+`status_service.dart`, `participant_service.dart`) — treat the code as the
+source of truth over this doc if they ever drift.
 
 ```
 POST /upload
   Content-Type: multipart/form-data
-  Body: file=<wav>, title?, participant_names[]=, voice_samples[]=<wav>
-  Response: { "job_id": "uuid" }
+  Body: file=<wav 16kHz mono>, title?, participants=<JSON string, e.g. [{"id":"p1","name":"Leandro"}]>,
+        expected_speaker_count?=<int>
+  Response: 202 { "job_id": "uuid", "status": "queued" }
 
-GET /status/{job_id}          (polling fallback)
+GET /status/{job_id}          (polling fallback — mandatory, see below)
+  Response: { "job_id", "status", "progress"?, "error"?: {"code","message"}, "updated_at" }
+
 WS   /ws/{job_id}             (real-time status)
-  Response: { "status": "queued|transcribing|diarizing|extracting|done|error" }
+  Today this is just a STUB: accepts the connection, sends the current
+  status ONCE, then closes. Real push (backend Fase 8) isn't implemented
+  yet — polling must keep working standalone, not as a secondary path.
 
 GET /resultado/{job_id}
+  200 with the canonical result below when status == "done"; 409 if not
+  done yet or done-with-error; 404 if the job doesn't exist.
   Response: {
     "job_id": "uuid",
     "status": "done",
-    "segments": [{ "speaker": "SPEAKER_00", "start": 0.0, "end": 4.2, "text": "..." }],
-    "questions": [{ "speaker": "SPEAKER_01", "time": 12.5, "text": "..." }]
+    "segments": [{
+      "id": "seg_0001", "cluster": "SPEAKER_00", "participant_id": "p1" | null,
+      "speaker": "Leandro" | null, "identified": true, "confidence": 0.82 | null,
+      "start": 0.0, "end": 4.2, "text": "..."
+    }],
+    "questions": [{
+      "id": "P1", "type": "explicit" | "implicit", "text": "...",
+      "participant_id": "p1" | null, "speaker": "Leandro" | null, "time": 12.5 | null,
+      "source_segment_ids": ["seg_0004"]
+    }],
+    "metadata": {"whisperx_model", "diarization_model", "voice_model", "llm_model", "generated_at", "stub"}
   }
+
+POST /participants/{id}/voice-samples
+  Content-Type: multipart/form-data
+  Body: file=<wav>, name?
+  Response: 200 { "participant_id", "sample_count", "model_version", "updated_at" }
+
+GET /participants/{id}/voice-profile
+  Response: 200 { "participant_id", "exists", "sample_count", "model_version", "updated_at" }
+  (always 200, even if it doesn't exist — check "exists")
+
+DELETE /participants/{id}/voice-profile
+  Response: 204
 ```
+
+Job states (exact strings, 8 total):
+`queued`, `transcribing`, `diarizing`, `identifying`, `summarizing`, `extracting`, `done`, `error`.
+
+Rules that matter for the client:
+- `confidence` is always populated with the best score, even when
+  `identified: false` (rejected by threshold/margin) — it is NOT itself a
+  signal of identification, only the `identified` field is. Never infer
+  identification from the presence of `confidence`.
+- Implicit questions (`type: "implicit"`) always have `participant_id`,
+  `speaker`, and `time` set to `null` — never invented client-side.
+- The client never maps `cluster` (e.g. `SPEAKER_00`) to a participant by
+  list position — only the backend-resolved `speaker`/`participant_id` are
+  trusted identity.
+- A real `error` status (or an unreachable backend) must surface as a real
+  error in the UI — never silently replaced with a fabricated/demo result.
+  The one exception is the explicit `SCITECH_DEMO_MODE` build flag (see
+  `lib/services/offline_service.dart`), used only for offline demos.
+- Voice samples are synced to the backend once, at participant
+  registration/update (`ParticipantService.syncVoiceSample`) — never
+  re-sent on every meeting upload.
 
 ## Development workflow
 
@@ -136,3 +188,4 @@ flutter test
 - Do not process audio on device — all ML runs on the backend
 - Do not store recordings permanently on device — upload and discard
 - Do not add authentication for now — single-user, local network deployment
+- Do not turn a real backend error (or unreachable backend) into a fabricated/demo result — surface the real error to the user; the offline/demo fallback only activates behind an explicit build/demo flag, never automatically

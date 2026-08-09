@@ -2,6 +2,17 @@ import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/meeting_result.dart';
 
+/// Habilita o caminho de demonstração (resultado fabricado localmente quando
+/// o backend está indisponível). Flag de compilação — `--dart-define=
+/// SCITECH_DEMO_MODE=true` — de propósito, para não correr o risco de uma
+/// demo "esquecida ligada" continuar fabricando resultado depois que o
+/// backend real volta a responder. O gate real fica nos pontos de chamada
+/// (recording/processing/home screens), não nesta função pura.
+const bool kDemoModeEnabled = bool.fromEnvironment(
+  'SCITECH_DEMO_MODE',
+  defaultValue: false,
+);
+
 /// Cache local de resultados (transcrição + perguntas), indexado por jobId.
 ///
 /// Usado tanto para guardar resultados de demonstração (gerados quando o
@@ -35,69 +46,60 @@ MeetingResult generateDemoResult({
       ? const ['Participante 1', 'Participante 2']
       : participantNames;
 
-  String speakerFor(int i) => 'SPEAKER_${(i % names.length).toString().padLeft(2, '0')}';
+  String clusterFor(int i) => 'SPEAKER_${(i % names.length).toString().padLeft(2, '0')}';
+  String speakerFor(int i) => names[i % names.length];
+
+  TranscriptSegment segment(
+    String id,
+    int speakerIndex,
+    double start,
+    double end,
+    String text,
+  ) => TranscriptSegment(
+    id: id,
+    cluster: clusterFor(speakerIndex),
+    speaker: speakerFor(speakerIndex),
+    identified: true,
+    start: start,
+    end: end,
+    text: text,
+  );
 
   final segments = <TranscriptSegment>[
-    TranscriptSegment(
-      speaker: speakerFor(0),
-      start: 0,
-      end: 6,
-      text: 'Bom dia, pessoal. Vamos começar revisando os pontos da última reunião.',
-    ),
-    TranscriptSegment(
-      speaker: speakerFor(1),
-      start: 6,
-      end: 14,
-      text: 'Bom dia! Já finalizei a parte que tinha ficado pendente e posso apresentar os resultados hoje.',
-    ),
-    TranscriptSegment(
-      speaker: speakerFor(0),
-      start: 14,
-      end: 22,
-      text: 'Ótimo. Antes disso, alguém tem alguma dúvida sobre o cronograma que definimos?',
-    ),
-    TranscriptSegment(
-      speaker: speakerFor(1),
-      start: 22,
-      end: 30,
-      text: 'Eu tenho uma dúvida: qual é o prazo final para a entrega da próxima etapa?',
-    ),
-    TranscriptSegment(
-      speaker: speakerFor(0),
-      start: 30,
-      end: 40,
-      text: 'Boa pergunta. Vamos fechar isso até sexta-feira, mas ainda preciso confirmar com a equipe.',
-    ),
-    TranscriptSegment(
-      speaker: speakerFor(1),
-      start: 40,
-      end: 50,
-      text: 'Perfeito. Também gostaria de saber se vamos precisar de mais recursos para a próxima fase.',
-    ),
-    TranscriptSegment(
-      speaker: speakerFor(0),
-      start: 50,
-      end: 60,
-      text: 'Vou levantar isso com a coordenação e trago uma resposta na próxima reunião.',
-    ),
-    TranscriptSegment(
-      speaker: speakerFor(1),
-      start: 60,
-      end: 66,
-      text: 'Combinado. Por enquanto acho que é isso, obrigado a todos.',
-    ),
+    segment('seg_0001', 0, 0, 6,
+        'Bom dia, pessoal. Vamos começar revisando os pontos da última reunião.'),
+    segment('seg_0002', 1, 6, 14,
+        'Bom dia! Já finalizei a parte que tinha ficado pendente e posso apresentar os resultados hoje.'),
+    segment('seg_0003', 0, 14, 22,
+        'Ótimo. Antes disso, alguém tem alguma dúvida sobre o cronograma que definimos?'),
+    segment('seg_0004', 1, 22, 30,
+        'Eu tenho uma dúvida: qual é o prazo final para a entrega da próxima etapa?'),
+    segment('seg_0005', 0, 30, 40,
+        'Boa pergunta. Vamos fechar isso até sexta-feira, mas ainda preciso confirmar com a equipe.'),
+    segment('seg_0006', 1, 40, 50,
+        'Perfeito. Também gostaria de saber se vamos precisar de mais recursos para a próxima fase.'),
+    segment('seg_0007', 0, 50, 60,
+        'Vou levantar isso com a coordenação e trago uma resposta na próxima reunião.'),
+    segment('seg_0008', 1, 60, 66,
+        'Combinado. Por enquanto acho que é isso, obrigado a todos.'),
   ];
 
   final questions = <Question>[
     Question(
+      id: 'demo_q1',
+      type: QuestionType.explicit,
+      text: 'Qual é o prazo final para a entrega da próxima etapa?',
       speaker: speakerFor(1),
       time: 22,
-      text: 'Qual é o prazo final para a entrega da próxima etapa?',
+      sourceSegmentIds: const ['seg_0004'],
     ),
     Question(
+      id: 'demo_q2',
+      type: QuestionType.explicit,
+      text: 'Vamos precisar de mais recursos para a próxima fase?',
       speaker: speakerFor(1),
       time: 40,
-      text: 'Vamos precisar de mais recursos para a próxima fase?',
+      sourceSegmentIds: const ['seg_0006'],
     ),
   ];
 

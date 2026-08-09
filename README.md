@@ -2,7 +2,9 @@
 
 App Flutter (cliente fino) para gravar reuniões, enviá-las a um backend de IA e exibir a transcrição com identificação de falantes e as perguntas extraídas automaticamente.
 
-Todo o processamento pesado (transcrição, diarização, extração de perguntas) roda no backend — o app apenas grava, envia e exibe o resultado.
+Todo o processamento pesado (transcrição, diarização, extração de perguntas) roda no backend — o app apenas grava, envia e exibe o resultado. Quando o backend não está disponível, o app cai automaticamente em um modo de demonstração offline, com um resultado fictício, para permitir apresentar o fluxo completo sem servidor no ar.
+
+> Para o documento completo de arquitetura (diagrama do sistema, camadas, contrato com o backend e recomendações), veja [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md).
 
 ## Arquitetura
 
@@ -12,6 +14,7 @@ SciTech Ear (Flutter, este repositório)
   └── Envia via HTTP multipart para o backend
   └── Acompanha o status do job (WebSocket, com fallback para polling)
   └── Exibe transcrição (com falantes) + perguntas extraídas
+  └── Se o backend estiver indisponível, gera um resultado de demonstração local
 
 Backend (repositório separado — ainda não implementado)
   └── FastAPI
@@ -23,16 +26,21 @@ Backend (repositório separado — ainda não implementado)
 ## Funcionalidades
 
 - **Login** com conta fixa pré-cadastrada (`leandro` / `leandro`, administrador) ou cadastro dinâmico de qualquer usuário/senha (mock local, sem backend de auth ainda)
-- **Configuração da reunião**: título e lista de participantes, cada um podendo gravar uma amostra de voz (usada pelo backend para diarização)
+- **Cadastro de participantes**: registro persistente e reutilizável entre reuniões, cada um podendo gravar uma amostra de voz (usada pelo backend para diarização)
+- **Configuração da reunião**: título (editável) e seleção dos participantes que estarão presentes
 - **Gravação**: captura de áudio em WAV 16 kHz mono, com visualização de forma de onda em tempo real, funcionando em segundo plano com a tela bloqueada
 - **Processamento**: upload multipart do áudio + amostras de voz, com acompanhamento do status (`queued` → `transcribing` → `diarizing` → `extracting` → `done`/`error`)
+- **Modo offline de demonstração**: se o backend não responder, o app gera um resultado plausível (usando os nomes reais dos participantes) para não travar a demonstração
+- **Histórico de reuniões**: lista local das reuniões já enviadas, com acesso ao resultado de cada uma
 - **Resultado**: transcrição com marcação de falante e tempo, e lista de perguntas identificadas na conversa
 
 ## Fluxo de telas
 
 ```
-AuthScreen → HomeScreen → MeetingSetupScreen → RecordingScreen → ProcessingScreen → ResultScreen
+AuthScreen → HomeScreen → MeetingSetupScreen → ParticipantsScreen → RecordingScreen → ProcessingScreen → ResultScreen
 ```
+
+`ParticipantsScreen` também é acessível diretamente da `HomeScreen`, como cadastro geral de participantes (fora do fluxo de uma reunião específica).
 
 ## Stack técnica
 
@@ -42,7 +50,7 @@ AuthScreen → HomeScreen → MeetingSetupScreen → RecordingScreen → Process
 | Execução em segundo plano (Android) | `flutter_background` + `wakelock_plus` | Mantém o áudio ativo com a tela bloqueada |
 | Upload/HTTP | `dio` | Multipart upload com progresso |
 | Status em tempo real | `web_socket_channel` | WebSocket com fallback de polling |
-| Persistência de sessão | `shared_preferences` | Guarda token/usuário localmente |
+| Persistência local | `shared_preferences` | Sessão, cadastro de participantes, histórico de reuniões e cache de resultados |
 | Permissões | `permission_handler` | Microfone e notificações |
 | UI | `google_fonts` (Inter) + `flutter_animate` | Tipografia e animações declarativas |
 
@@ -55,14 +63,16 @@ lib/
   core/theme/                     # cores e tema (dark) do app
   models/
     user.dart                     # AppUser (id, nome, email, isAdmin)
-    participant.dart              # Participante da reunião + amostra de voz
+    participant.dart              # Participante cadastrado + amostra de voz
+    meeting.dart                  # Meeting (metadados de reunião enviada)
     meeting_result.dart           # TranscriptSegment, Question, MeetingResult (espelha o JSON do backend)
   screens/
     auth_screen.dart               # login / cadastro
-    home_screen.dart               # tela inicial, atalho para nova reunião, logout
-    meeting_setup_screen.dart      # título da reunião + participantes + amostras de voz
+    home_screen.dart               # tela inicial, histórico de reuniões, atalhos, logout
+    meeting_setup_screen.dart      # título da reunião + seleção de participantes
+    participants_screen.dart       # cadastro/gerência de participantes e amostras de voz
     recording_screen.dart          # gravação com forma de onda em tempo real
-    processing_screen.dart         # upload + acompanhamento de status
+    processing_screen.dart         # upload + acompanhamento de status (com fallback offline)
     result_screen.dart             # transcrição e perguntas extraídas
   services/
     auth_service.dart              # login/cadastro/logout (mock local via shared_preferences)
@@ -70,6 +80,9 @@ lib/
     background_service.dart        # foreground service (Android) + wakelock
     upload_service.dart            # upload multipart (áudio + amostras de voz)
     status_service.dart            # WebSocket/polling de status + busca do resultado
+    meeting_service.dart           # histórico local de reuniões
+    participant_service.dart       # cadastro persistente de participantes
+    offline_service.dart           # geração de resultado de demonstração sem backend
   widgets/                         # componentes visuais reutilizáveis (glass card, botão gradiente, avatar)
 ```
 

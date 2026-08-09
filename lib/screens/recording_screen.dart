@@ -40,6 +40,8 @@ class _RecordingScreenState extends State<RecordingScreen>
   bool _isRecording = false;
   bool _isUploading = false;
   double _uploadProgress = 0;
+  String? _uploadError;
+  String? _pendingAudioPath;
   Duration _elapsed = Duration.zero;
   Timer? _timer;
   StreamSubscription<Amplitude>? _ampSub;
@@ -140,9 +142,15 @@ class _RecordingScreenState extends State<RecordingScreen>
       return;
     }
 
+    _pendingAudioPath = path;
+    await _attemptUpload(path);
+  }
+
+  Future<void> _attemptUpload(String path) async {
     setState(() {
       _isUploading = true;
       _uploadProgress = 0;
+      _uploadError = null;
     });
 
     String jobId;
@@ -155,15 +163,28 @@ class _RecordingScreenState extends State<RecordingScreen>
           if (mounted) setState(() => _uploadProgress = p);
         },
       );
-    } catch (_) {
-      // Backend indisponível: em vez de perder a gravação, salva a reunião
-      // localmente com um resultado de demonstração gerado no dispositivo.
-      jobId = 'local_${DateTime.now().microsecondsSinceEpoch}';
-      final demoResult = generateDemoResult(
-        jobId: jobId,
-        participantNames: widget.participants.map((p) => p.name).toList(),
-      );
-      await _resultCache.save(jobId, demoResult);
+    } catch (e) {
+      if (kDemoModeEnabled) {
+        // Modo demonstração explícito (--dart-define=SCITECH_DEMO_MODE=true):
+        // salva a reunião localmente com um resultado fabricado.
+        jobId = 'local_${DateTime.now().microsecondsSinceEpoch}';
+        final demoResult = generateDemoResult(
+          jobId: jobId,
+          participantNames: widget.participants.map((p) => p.name).toList(),
+        );
+        await _resultCache.save(jobId, demoResult);
+      } else {
+        // Erro real do backend/conexão: nunca virar resultado fictício —
+        // mostra o erro e deixa o usuário tentar de novo com o mesmo áudio.
+        if (!mounted) return;
+        setState(() {
+          _isUploading = false;
+          _uploadError = e is UploadException
+              ? e.message
+              : 'Não foi possível enviar a gravação. Tente novamente.';
+        });
+        return;
+      }
     }
 
     await _history.add(Meeting(
@@ -185,6 +206,12 @@ class _RecordingScreenState extends State<RecordingScreen>
         ),
       ),
     );
+  }
+
+  void _retryUpload() {
+    final path = _pendingAudioPath;
+    if (path == null) return;
+    _attemptUpload(path);
   }
 
   void _showSnack(String msg) {
@@ -384,6 +411,61 @@ class _RecordingScreenState extends State<RecordingScreen>
   }
 
   Widget _buildBottomSection() {
+    if (_uploadError != null) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 28),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.error.withAlpha(25),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppColors.error.withAlpha(80)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.error_outline_rounded,
+                      color: AppColors.error, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      _uploadError!,
+                      style: GoogleFonts.inter(
+                        color: AppColors.textPrimary,
+                        fontSize: 13,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    onPressed: () => setState(() => _uploadError = null),
+                    child: const Text('Descartar'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: _retryUpload,
+                    icon: const Icon(Icons.refresh_rounded, size: 18),
+                    label: const Text('Tentar enviar novamente'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      );
+    }
+
     if (_isUploading) {
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 40),

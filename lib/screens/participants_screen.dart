@@ -109,11 +109,27 @@ class _ParticipantsScreenState extends State<ParticipantsScreen> {
       builder: (ctx) => VoiceSampleSheet(
         participant: participant,
         onSaved: (path) async {
-          await _service.update(participant.copyWith(voiceSamplePath: path));
+          final updated = participant.copyWith(voiceSamplePath: path);
+          await _service.update(updated);
           await _load();
+          try {
+            await _service.syncVoiceSample(updated);
+          } catch (_) {
+            if (mounted) {
+              _showSnack(
+                'Amostra salva localmente, mas não foi possível sincronizar com o servidor agora.',
+              );
+            }
+          } finally {
+            await _load();
+          }
         },
       ),
     );
+  }
+
+  void _showSnack(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _removeParticipant(Participant participant) async {
@@ -141,8 +157,13 @@ class _ParticipantsScreenState extends State<ParticipantsScreen> {
       ),
     );
     if (confirmed == true) {
-      await _service.remove(participant.id);
+      final remoteDeleted = await _service.remove(participant.id);
       await _load();
+      if (!remoteDeleted && mounted) {
+        _showSnack(
+          'Participante removido do aparelho, mas o perfil de voz no servidor não pôde ser excluído agora.',
+        );
+      }
     }
   }
 
@@ -296,13 +317,17 @@ class _ParticipantsScreenState extends State<ParticipantsScreen> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        p.hasVoiceSample
-                            ? '✓ Amostra de voz gravada'
-                            : 'Sem amostra de voz',
+                        !p.hasVoiceSample
+                            ? 'Sem amostra de voz'
+                            : p.voiceProfileSynced
+                                ? '✓ Amostra sincronizada'
+                                : 'Amostra gravada — não sincronizada',
                         style: GoogleFonts.inter(
-                          color: p.hasVoiceSample
-                              ? AppColors.success
-                              : AppColors.textSecondary,
+                          color: !p.hasVoiceSample
+                              ? AppColors.textSecondary
+                              : p.voiceProfileSynced
+                                  ? AppColors.success
+                                  : const Color(0xFFFBBF24),
                           fontSize: 12,
                         ),
                       ),
