@@ -1,59 +1,227 @@
 # SciTech Ear — Arquitetura do Frontend
 
 > Complementa o [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md) (visão geral do
-> sistema). Este documento detalha só o repositório `scitechear` (app
-> Flutter).
+> sistema, com glossário — leia-o primeiro se ainda não leu). Este documento
+> detalha o repositório `scitechear`: cada tela, cada serviço, e o
+> raciocínio por trás das decisões que moldaram essa estrutura.
 
-## Visão geral
+## 1. O papel do aplicativo: cliente fino
+
+Antes de entrar nos detalhes de cada arquivo, vale fixar o princípio que
+organiza todo o resto: **este aplicativo não processa inteligência
+artificial nenhuma.** Ele grava áudio, envia ao backend, acompanha o
+progresso, e exibe o que recebe de volta. Nenhuma transcrição, nenhuma
+identificação de voz, nenhuma extração de pergunta acontece no aparelho.
+Essa escolha existe por dois motivos: manter o aplicativo leve o
+suficiente para rodar em qualquer telefone comum, e concentrar o uso da
+GPU (recurso caro e escasso) inteiramente no servidor.
+
+Uma consequência direta disso é que a maior parte do código do app não
+está resolvendo problemas de IA — está resolvendo problemas de engenharia
+de aplicativo móvel: gravar áudio de forma confiável mesmo com a tela
+bloqueada, lidar com conexão instável, e apresentar de forma clara um
+processamento que pode levar minutos.
+
+## 2. Visão geral
 
 ![Arquitetura do frontend](diagrams/05-frontend-architecture.svg)
 
-O app é um **cliente fino**: capta áudio, envia ao backend, acompanha o
-processamento e exibe o resultado. Nenhum modelo de IA roda no
-dispositivo — toda a inteligência vem da API.
+O código está organizado em três camadas dentro de `lib/`: **telas**
+(`screens/`, a interface e o fluxo de navegação), **serviços**
+(`services/`, a lógica de integração com o backend e com recursos do
+aparelho), e **modelos** (`models/`, as estruturas de dados que espelham o
+contrato do backend). Diferente do backend, aqui não há uma camada de
+"repositório" formal — o estado local relevante (cache de resultados,
+sessão do usuário) é gerenciado dentro dos próprios serviços.
 
-## Fluxo de telas (`lib/screens`)
+## 3. Fluxo de telas
 
-| Tela | Papel | Serviços que aciona |
-|---|---|---|
-| `AuthScreen` | Login/cadastro (hoje simulado, sem backend de autenticação real). | `AuthService` |
-| `HomeScreen` | Histórico de reuniões e ponto de partida para uma nova. Reabre reuniões salvas. | `AuthService`, `StatusService` |
-| `MeetingSetupScreen` | Título da reunião e cadastro de participantes, incluindo a amostra de voz. | `ParticipantService` |
-| `RecordingScreen` | Grava o áudio (WAV 16kHz mono) e envia ao final. | `AudioService`, `BackgroundService`, `UploadService` |
-| `ProcessingScreen` | Acompanha os 6 estágios não-terminais do job; erro vira uma tela própria, não um resultado fabricado. | `StatusService` |
-| `ResultScreen` | Exibe a transcrição (por falante) e as perguntas (explícitas/implícitas), em abas. | — |
+O aplicativo segue um fluxo linear, tela após tela, sem um framework de
+gerenciamento de estado global (como Provider, Riverpod ou Bloc) — as
+dependências (como o serviço de autenticação) são passadas explicitamente
+de uma tela para a seguinte, através dos construtores dos widgets. Essa é
+uma escolha deliberadamente simples: para o tamanho atual do aplicativo,
+introduzir uma camada de gerenciamento de estado traria mais complexidade
+do que benefício. Se o app crescer substancialmente, essa é uma decisão
+que vale revisitar.
 
-**Regra transversal que vale para as três telas de fluxo de gravação/
-histórico** (`RecordingScreen`, `ProcessingScreen`, `HomeScreen`): uma falha
-real do backend nunca é convertida em resultado fabricado localmente. O
-usuário vê o erro e pode tentar novamente ou voltar. O caminho de demonstração
-(dados fictícios) só existe atrás da flag de build `SCITECH_DEMO_MODE`.
+### 3.1. `AuthScreen` — entrada
 
-## Serviços (`lib/services`)
+Login e cadastro do usuário. Hoje é uma implementação simplificada, sem um
+backend de autenticação real por trás — uma limitação conhecida e
+aceitável para a V1, que deverá ser substituída por autenticação de
+verdade antes de qualquer uso além de testes internos.
 
-| Serviço | Responsabilidade | Ponto de atenção |
-|---|---|---|
-| `participant_service.dart` | Sincroniza a amostra de voz com o backend (`POST /participants/{id}/voice-samples`) e solicita exclusão remota ao apagar um participante. | A sincronização acontece **uma vez**, no cadastro/atualização — nunca a cada reunião. Só é chamada a partir de `participants_screen.dart`. |
-| `upload_service.dart` | Envia o áudio e os participantes (`participants` como JSON com `id`/`name`) via multipart. | Não envia mais `voice_samples[]` a cada upload. Erros viram `UploadException` tipada, com mensagens acionáveis. |
-| `status_service.dart` | Acompanha o job via WebSocket, com fallback automático para polling. | Trata o WS fechando cedo (antes de um estado terminal) como equivalente a erro, caindo no polling — evita travar a tela de processamento. |
-| `audio_service.dart` + `background_service.dart` | Captura o áudio (pacote `record`) e mantém a gravação ativa em segundo plano no Android (foreground service). | — |
-| `offline_service.dart` | `LocalResultCache` (reabrir reuniões já processadas) e o gerador de resultado demo. | O gerador de demo só é chamado atrás do gate `SCITECH_DEMO_MODE` — a política de "quando fabricar" fica nos pontos de chamada, não dentro da função. |
+### 3.2. `HomeScreen` — ponto de partida
 
-## Modelos (`lib/models`)
+Mostra o histórico de reuniões já realizadas e é o ponto de partida para
+iniciar uma nova. Também é responsável por reabrir uma reunião já
+processada anteriormente (buscando o resultado em cache local ou,
+se necessário, consultando o backend de novo). Esta tela segue a mesma
+regra de tratamento de erro das telas de gravação e processamento
+(seção 6): se não conseguir carregar uma reunião do histórico, mostra um
+erro real, nunca inventa um conteúdo.
 
-- **`participant.dart`** — `id` é a identidade compartilhada com o backend
-  (`participant_id`); `voiceProfileSynced` indica se a amostra atual já foi
-  sincronizada.
-- **`meeting_result.dart`** — espelha o contrato canônico do backend:
-  `TranscriptSegment` (`cluster`, `participant_id`, `identified`,
-  `confidence`, com `speaker` agora nulável) e `Question`
-  (`type: explicit|implicit`, `participant_id`/`speaker`/`time` nuláveis).
-  Ver o contrato completo em
-  [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md#4-contrato-de-dados-canônico).
+### 3.3. `MeetingSetupScreen` — antes de gravar
 
-## Configuração (`lib/config.dart`)
+Onde o título da reunião é definido e os participantes são selecionados
+ou cadastrados. É aqui, e só aqui, que uma amostra de voz é gravada e
+sincronizada com o backend — nunca durante a gravação da reunião em si.
 
-A URL do backend não é mais fixa no código — é definida em tempo de build:
+### 3.4. `RecordingScreen` — durante a reunião
+
+Grava o áudio (WAV, 16kHz, mono, o formato exato que o backend espera) e,
+ao finalizar, envia ao servidor. Reflete o princípio da seção 6: se o
+envio falhar, o erro real é mostrado, com a opção de tentar reenviar o
+mesmo arquivo já gravado (sem precisar regravar a reunião do zero).
+
+### 3.5. `ProcessingScreen` — acompanhando o processamento
+
+Mostra visualmente os seis estágios não-terminais do job
+(`queued`, `transcribing`, `diarizing`, `identifying`, `summarizing`,
+`extracting`), consultando o status do backend. O estado `error` não é
+tratado como mais um passo da lista — vira uma tela de erro própria e
+distinta, com título, mensagem específica (vinda do `error.message` do
+backend, quando disponível) e as opções de tentar novamente ou voltar.
+
+### 3.6. `ResultScreen` — o resultado final
+
+Exibe a transcrição, organizada por segmento e por falante, e as perguntas
+extraídas (explícitas e implícitas), em abas. O texto de cada segmento e
+de cada pergunta é exibido exatamente como veio do backend, sem
+reprocessamento no cliente.
+
+## 4. Serviços — a lógica por trás das telas
+
+### 4.1. `participant_service.dart` — identidade e voz
+
+Gerencia os dados do participante localmente e sincroniza a amostra de voz
+com o backend através de `POST /participants/{id}/voice-samples`. Um
+ponto de design que merece destaque, porque já foi fonte de um bug real
+antes de ser corrigido: **a sincronização acontece uma única vez, no
+momento do cadastro ou da atualização da amostra — nunca a cada
+reunião.** Isso é garantido estruturalmente pelo próprio ponto de chamada:
+a função de sincronização só é invocada a partir da tela de cadastro de
+participantes, nunca do fluxo de upload de uma reunião. Ao remover um
+participante, o serviço tenta, de forma best-effort, solicitar a exclusão
+do perfil remoto também — mas a remoção local sempre acontece,
+independentemente de o backend estar acessível ou não nesse momento.
+
+### 4.2. `upload_service.dart` — enviando a reunião
+
+Monta a requisição multipart para `POST /upload`: o arquivo de áudio, e a
+lista de participantes serializada como um único campo JSON
+(`participants`), com `id` e `name` de cada um. Uma versão anterior deste
+serviço enviava uma amostra de voz por participante a cada upload de
+reunião (`voice_samples[]`) — isso foi removido, já que o cadastro de voz
+passou a ser responsabilidade exclusiva de `participant_service.dart`,
+feito uma única vez. Erros de rede ou de resposta do servidor são
+convertidos em uma exceção tipada (`UploadException`), com mensagens
+específicas e acionáveis (timeout, sem conexão, erro retornado pelo
+servidor), em vez de um erro genérico indiferenciado.
+
+### 4.3. `status_service.dart` — acompanhando o job
+
+Tenta primeiro um canal WebSocket para receber atualizações de status em
+tempo real; se ele falhar ou não estiver disponível, recorre
+automaticamente a consultas periódicas por polling (a cada poucos
+segundos). Um detalhe de comportamento vale registro porque corrigiu um
+bug real encontrado durante o desenvolvimento: **se o WebSocket fechar a
+conexão antes de o job chegar a um estado terminal (`done` ou `error`),
+isso é tratado exatamente como se fosse um erro de conexão — caindo no
+polling — em vez de simplesmente parar de escutar.** Sem esse tratamento,
+uma implementação de servidor que fecha a conexão WebSocket após enviar
+uma única atualização (um comportamento válido, ainda que minimalista)
+faria a tela de processamento travar indefinidamente na primeira
+atualização recebida.
+
+### 4.4. `audio_service.dart` e `background_service.dart` — a captação
+
+`audio_service.dart` grava o áudio usando o pacote `record`, configurado
+explicitamente para o formato esperado pelo backend. `background_service`
+mantém a gravação ativa mesmo com a tela do aparelho bloqueada, no
+Android, através de um serviço em primeiro plano (foreground service) com
+uma notificação persistente — sem isso, o sistema operacional encerraria a
+gravação assim que a tela fosse bloqueada.
+
+### 4.5. `offline_service.dart` — cache e modo de demonstração
+
+Duas responsabilidades relacionadas, mas distintas:
+
+- **`LocalResultCache`** — guarda localmente o resultado de reuniões já
+  processadas, para que `HomeScreen` possa reabri-las sem depender de uma
+  nova consulta ao backend.
+- **Geração de resultado de demonstração** — produz dados fictícios de
+  reunião, usados exclusivamente quando o aplicativo é compilado com a
+  flag `SCITECH_DEMO_MODE=true`. Um ponto de design deliberado: a decisão
+  de *quando* usar esse gerador fica sempre nos pontos de chamada (as
+  telas), nunca dentro da própria função geradora — ela não sabe, e não
+  deveria saber, por que está sendo chamada. Isso mantém a política de uso
+  do modo demo centralizada e fácil de auditar.
+
+## 5. Modelos de dados
+
+### 5.1. `participant.dart`
+
+O campo `id` é o `participant_id` compartilhado com o backend — a
+identidade real do participante em todo o sistema (ver a explicação
+completa desse princípio em
+[`docs/ARCHITECTURE.md`](./ARCHITECTURE.md#8-por-que-participant_id-e-não-o-nome)).
+O campo `voiceProfileSynced` (booleano) indica se a amostra de voz atual
+já foi enviada ao backend com sucesso; ele é reiniciado para `false`
+automaticamente sempre que uma nova amostra é gravada, garantindo que uma
+amostra desatualizada nunca fique marcada como sincronizada por engano.
+
+### 5.2. `meeting_result.dart`
+
+Espelha fielmente o contrato canônico do backend
+(seção 9 de [`docs/ARCHITECTURE.md`](./ARCHITECTURE.md)):
+`TranscriptSegment` carrega `cluster`, `participant_id`, `speaker`
+(agora nulável — nem todo segmento tem uma pessoa identificada),
+`identified` e `confidence`; `Question` carrega um `type`
+(`explicit` ou `implicit`) e campos de identidade opcionais
+(`participant_id`, `speaker`, `time`), que ficam `null` para perguntas
+implícitas.
+
+## 6. A regra que estas telas nunca violam
+
+`RecordingScreen`, `ProcessingScreen` e `HomeScreen` compartilham uma
+regra de comportamento que atravessa este repositório inteiro: **uma
+falha real de comunicação com o backend nunca é convertida, de forma
+automática e silenciosa, em um resultado fabricado localmente.** Se o
+upload falha, se o processamento retorna erro, se uma reunião do
+histórico não pode ser recuperada — o usuário vê isso claramente, com uma
+mensagem específica e a opção de tentar novamente ou voltar. O único
+caminho por onde dados fictícios aparecem é o modo de demonstração
+explícito (seção 4.5), ativado na compilação do aplicativo, nunca como
+reação automática a uma falha em produção.
+
+Esta regra existe porque a alternativa — mostrar "algo" na tela mesmo
+quando o processamento real falhou — cria uma falsa sensação de que o
+sistema funcionou, quando na verdade não funcionou. Isso é
+particularmente perigoso em um sistema cujo propósito é justamente
+registrar com fidelidade o que foi discutido em uma reunião real.
+
+## 7. Sem mapeamento posicional de falante
+
+Uma segunda regra importante, específica de `ResultScreen`: o rótulo e a
+cor exibidos para cada segmento de transcrição e cada pergunta nunca são
+derivados da *posição* do participante em uma lista local — são sempre
+derivados do `participant_id` ou do `cluster` que o backend devolveu.
+Uma versão anterior da tela associava o rótulo `SPEAKER_00` ao primeiro
+participante da lista de configuração da reunião, `SPEAKER_01` ao
+segundo, e assim por diante — um mapeamento por posição que quebrava
+silenciosamente sempre que a ordem dos participantes não coincidia com a
+ordem em que o pyannote atribuiu os clusters (o que é o caso na maioria
+das vezes, já que a diarização não tem nenhuma noção da ordem em que as
+pessoas foram cadastradas no aplicativo). A correção elimina essa
+suposição por completo: a identidade exibida vem exclusivamente do
+resultado biométrico do backend.
+
+## 8. Configuração
+
+A URL do backend não é mais fixa no código-fonte — é definida em tempo de
+build, via `--dart-define`:
 
 ```bash
 flutter run \
@@ -61,28 +229,46 @@ flutter run \
   --dart-define=SCITECH_WS_BASE_URL=ws://10.0.2.2:8000
 ```
 
-`10.0.2.2` é o endereço padrão do Android Emulator para alcançar o
-`localhost` do computador host. Para dispositivo físico, use o IP local da
-máquina que roda o backend.
+`10.0.2.2` é o endereço especial que o Android Emulator usa para alcançar
+o `localhost` da máquina host — ou seja, para testar contra um backend
+rodando no mesmo computador que roda o emulador. Para um dispositivo
+físico conectado à mesma rede, use o IP local da máquina que roda o
+backend (por exemplo, obtido com `ipconfig getifaddr en0` em um Mac).
 
-O modo demo é outra flag de compilação, não um toggle em runtime — evita o
-risco de ficar "esquecido ligado" quando o backend real volta a responder:
+O modo de demonstração é configurado da mesma forma, como uma flag de
+compilação e não como um interruptor em tempo de execução:
 
 ```bash
 --dart-define=SCITECH_DEMO_MODE=true
 ```
 
-## Regras que este repositório nunca viola
+Essa escolha (flag de build, não de runtime) existe para eliminar o risco
+de alguém ativar o modo demo para uma apresentação e esquecer de
+desativá-lo depois — como é uma flag de compilação, ela não pode
+"vazar" silenciosamente para uma instalação de produção sem uma decisão
+explícita de build.
 
-- **Sem mapeamento posicional de falante.** `ResultScreen` nunca associa
-  `SPEAKER_N` a um participante pela ordem da lista — usa exclusivamente o
-  `speaker`/`participant_id` que o backend resolveu por biometria.
-- **Sem fallback fictício automático** nas telas de gravação, processamento
-  e histórico.
-- **`participant_id` como chave**, nunca o nome, para qualquer
-  correlação com o backend.
+## 9. Ambiente de desenvolvimento e testes
 
-## Escopo da V1
+Para rodar localmente contra um backend também local, no Android Emulator:
 
-Android apenas (testado via Android Emulator e dispositivo físico). iOS é
-preservado no código, mas não é critério de aceite desta fase.
+```bash
+flutter devices                       # confirme o ID do dispositivo/emulador
+flutter run -d <device-id> \
+  --dart-define=SCITECH_API_BASE_URL=http://10.0.2.2:8000 \
+  --dart-define=SCITECH_WS_BASE_URL=ws://10.0.2.2:8000
+```
+
+Os testes automatizados priorizam a verificação do parsing do contrato de
+dados (o JSON que o backend devolve, incluindo casos de borda como
+segmentos não identificados e perguntas implícitas com campos nulos) e o
+comportamento de fallback de rede (WebSocket falhando e caindo em
+polling), em vez de depender de um backend real rodando durante a suíte
+de testes.
+
+## 10. Escopo da V1
+
+Android é a plataforma testada e validada nesta versão — o código
+preserva compatibilidade com iOS, mas isso não é critério de aceite da V1.
+A autenticação é simplificada (seção 3.1); um serviço de autenticação real
+é um passo necessário antes de qualquer uso além de testes internos.
