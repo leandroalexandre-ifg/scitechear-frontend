@@ -147,3 +147,14 @@ flutter test
 - Não processar áudio no dispositivo — todo o ML roda no backend
 - Não armazenar gravações permanentemente no dispositivo — enviar e descartar
 - Não usar o login mock atual como autenticação real de produção — é um placeholder até o backend de auth existir
+
+## Arquitetura
+
+Documentação completa da arquitetura, com diagramas, em [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (visão geral do sistema) e [`docs/FRONTEND_ARCHITECTURE.md`](docs/FRONTEND_ARCHITECTURE.md) (telas, serviços e modelos deste repositório).
+
+![Fluxo de telas e serviços do frontend](docs/diagrams/05-frontend-architecture.svg)
+
+| Documento | Conteúdo |
+|---|---|
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Contexto geral, máquina de estados do job, sequência ponta a ponta, contrato de dados |
+| [`docs/FRONTEND_ARCHITECTURE.md`](docs/FRONTEND_ARCHITECTURE.md) | Telas, serviços, modelos, configuração via `--dart-define` |
