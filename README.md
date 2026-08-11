@@ -158,3 +158,28 @@ Documentação completa da arquitetura, com diagramas, em [`docs/ARCHITECTURE.md
 |---|---|
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Contexto geral, máquina de estados do job, sequência ponta a ponta, contrato de dados |
 | [`docs/FRONTEND_ARCHITECTURE.md`](docs/FRONTEND_ARCHITECTURE.md) | Telas, serviços, modelos, configuração via `--dart-define` |
+
+## Rodando em dispositivo físico (Android)
+
+Recomendado sobre o emulador — evita problemas de captura de áudio do emulador.
+
+1. No aparelho: ative "Opções do desenvolvedor" (7x em "Número da versão") e a "Depuração USB".
+2. Conecte por cabo USB e autorize o popup de depuração no aparelho.
+3. Confirme a conexão:
+```bash
+   flutter devices
+```
+4. Redirecione a porta do backend via USB (evita problemas de rede/Wi-Fi):
+```bash
+   ~/Library/Android/sdk/platform-tools/adb reverse tcp:8000 tcp:8000
+```
+5. Suba o backend (em outro terminal):
+```bash
+   cd ~/SciTech-backend && source .venv/bin/activate && uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+6. Rode o app apontando para `localhost`, via o túnel do adb:
+```bash
+   flutter run -d <device-id> --dart-define=SCITECH_API_BASE_URL=http://127.0.0.1:8000 --dart-define=SCITECH_WS_BASE_URL=ws://127.0.0.1:8000
+```
+
+Se o aparelho for desconectado e reconectado, repita o passo 4 (`adb reverse`).
