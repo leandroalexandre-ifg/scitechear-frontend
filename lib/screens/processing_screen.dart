@@ -197,7 +197,8 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const SizedBox(height: 48),
+        _buildTopBar(),
+        const SizedBox(height: 24),
         _buildHeader(),
         const SizedBox(height: 48),
         _buildSteps(),
@@ -263,6 +264,20 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
         const SizedBox(height: 12),
         _buildJobId(),
       ],
+    );
+  }
+
+  Widget _buildTopBar() {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: IconButton(
+        icon: const Icon(Icons.home_rounded,
+            color: AppColors.textPrimary, size: 22),
+        tooltip: 'Voltar às suas reuniões',
+        onPressed: () {
+          Navigator.of(context).popUntil((r) => r.isFirst);
+        },
+      ),
     );
   }
 

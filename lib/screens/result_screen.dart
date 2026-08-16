@@ -201,6 +201,7 @@ class _ResultScreenState extends State<ResultScreen>
           IconButton(
             icon: const Icon(Icons.home_rounded,
                 color: AppColors.textPrimary, size: 22),
+            tooltip: 'Voltar às suas reuniões',
             onPressed: () {
               Navigator.of(context).popUntil((r) => r.isFirst);
             },
