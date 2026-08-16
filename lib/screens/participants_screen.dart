@@ -68,6 +68,7 @@ class _ParticipantsScreenState extends State<ParticipantsScreen> {
             TextField(
               controller: ctrl,
               autofocus: true,
+              textCapitalization: TextCapitalization.words,
               style: const TextStyle(color: AppColors.textPrimary),
               decoration: const InputDecoration(
                 labelText: 'Nome do participante',

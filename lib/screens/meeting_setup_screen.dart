@@ -278,6 +278,7 @@ class _MeetingSetupScreenState extends State<MeetingSetupScreen> {
         const SizedBox(height: 10),
         TextField(
           controller: _titleCtrl,
+          textCapitalization: TextCapitalization.sentences,
           style: const TextStyle(color: AppColors.textPrimary, fontSize: 15),
           decoration: const InputDecoration(
             hintText: 'ex.: Reunião de Planejamento Sprint 12',

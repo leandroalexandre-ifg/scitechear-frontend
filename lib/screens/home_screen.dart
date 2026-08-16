@@ -168,6 +168,7 @@ class _HomeScreenState extends State<HomeScreen> {
         content: TextField(
           controller: ctrl,
           autofocus: true,
+          textCapitalization: TextCapitalization.sentences,
           style: const TextStyle(color: AppColors.textPrimary, fontSize: 15),
           decoration: const InputDecoration(
             labelText: 'Título',

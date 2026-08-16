@@ -158,6 +158,7 @@ class _AuthScreenState extends State<AuthScreen> {
                         ctrl: _nameCtrl,
                         label: 'Nome completo',
                         icon: Icons.person_outline_rounded,
+                        textCapitalization: TextCapitalization.words,
                         validator: (v) => v!.isEmpty ? 'Informe seu nome' : null,
                       ),
                       const SizedBox(height: 14),
@@ -252,12 +253,14 @@ class _AuthScreenState extends State<AuthScreen> {
     TextInputType? type,
     bool obscure = false,
     Widget? suffix,
+    TextCapitalization textCapitalization = TextCapitalization.none,
     String? Function(String?)? validator,
   }) {
     return TextFormField(
       controller: ctrl,
       obscureText: obscure,
       keyboardType: type,
+      textCapitalization: textCapitalization,
       style: const TextStyle(color: AppColors.textPrimary, fontSize: 15),
       validator: validator,
       decoration: InputDecoration(
