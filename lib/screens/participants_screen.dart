@@ -58,7 +58,7 @@ class _ParticipantsScreenState extends State<ParticipantsScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Cadastrar participante',
+              'Cadastro de Biometria da Voz',
               style: GoogleFonts.inter(
                   fontWeight: FontWeight.w700,
                   fontSize: 18,

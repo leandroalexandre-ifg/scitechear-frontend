@@ -366,7 +366,7 @@ class _MeetingSetupScreenState extends State<MeetingSetupScreen> {
                 const SizedBox(width: 14),
                 Expanded(
                   child: Text(
-                    'Adicione pelo menos um\nparticipante para continuar.',
+                    'Nenhum participante adicionado.\nVocê pode iniciar a reunião mesmo assim.',
                     style: GoogleFonts.inter(
                         color: AppColors.textSecondary, fontSize: 13),
                   ),
@@ -393,7 +393,7 @@ class _MeetingSetupScreenState extends State<MeetingSetupScreen> {
     return GradientButton(
       label: 'Iniciar Gravação',
       icon: Icons.mic_rounded,
-      onPressed: _participants.isEmpty ? null : _startRecording,
+      onPressed: _startRecording,
       gradient: AppColors.heroGradient,
     ).animate(delay: 300.ms).fadeIn().slideY(begin: 0.3);
   }

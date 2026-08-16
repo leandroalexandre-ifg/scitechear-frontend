@@ -37,7 +37,13 @@ class _VoiceSampleSheetState extends State<VoiceSampleSheet>
   double _amplitude = 0.0;
   late AnimationController _pulseCtrl;
 
-  static const _maxSeconds = 10;
+  static const _maxSeconds = 20;
+
+  static const _guideScript =
+      'Meu nome é <diga seu nome> e estou participando desta reunião. '
+      'Hoje vamos revisar os projetos e organizar as próximas atividades. '
+      'Você consegue me ouvir com clareza? Gosto de trabalhar em equipe '
+      'com organização e responsabilidade.';
 
   @override
   void initState() {
@@ -178,6 +184,23 @@ class _VoiceSampleSheetState extends State<VoiceSampleSheet>
 
           const SizedBox(height: 20),
           if (_recording) ...[
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.border.withAlpha(60),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Text(
+                _guideScript,
+                textAlign: TextAlign.center,
+                style: GoogleFonts.inter(
+                  color: AppColors.textPrimary,
+                  fontSize: 14,
+                  height: 1.5,
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
             Text(
               '${_elapsed}s / ${_maxSeconds}s',
               style: GoogleFonts.inter(
