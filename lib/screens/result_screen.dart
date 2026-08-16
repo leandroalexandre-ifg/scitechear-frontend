@@ -225,6 +225,16 @@ class _ResultScreenState extends State<ResultScreen>
                     fontSize: 12,
                   ),
                 ),
+                // Exibido para o usuário poder citar o job_id ao reportar
+                // um problema de suporte.
+                Text(
+                  'Job ID: ${widget.result.jobId}',
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.robotoMono(
+                    color: AppColors.textMuted,
+                    fontSize: 10,
+                  ),
+                ),
               ],
             ),
           ),
