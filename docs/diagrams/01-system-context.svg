@@ -1,10 +1,10 @@
-<svg width="920" height="620" viewBox="0 0 920 620" xmlns="http://www.w3.org/2000/svg" font-family="Arial, Helvetica, sans-serif">
+<svg width="920" height="668" viewBox="0 0 920 668" xmlns="http://www.w3.org/2000/svg" font-family="Arial, Helvetica, sans-serif">
 <defs>
 <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
 <path d="M2 1L8 5L2 9" fill="none" stroke="#5F5E5A" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
 </marker>
 </defs>
-<rect width="920" height="620" fill="#FFFFFF"/>
+<rect width="920" height="668" fill="#FFFFFF"/>
 <text x="30" y="34" font-size="18" font-weight="bold" fill="#111827">SciTech Ear — Contexto Geral do Sistema</text>
 
 <!-- CLIENTE -->
@@ -30,14 +30,16 @@
 <text x="745" y="186" font-size="11.5" text-anchor="middle" fill="#0C447C">resultado fictício</text>
 
 <!-- setas cliente -> backend -->
-<text x="105" y="252" font-size="11" fill="#5B3FA8" text-anchor="middle">POST/GET/DELETE</text>
-<text x="105" y="266" font-size="11" fill="#5B3FA8" text-anchor="middle">/participants/{id}/voice-*</text>
+<text x="116" y="246" font-size="10.5" fill="#5B3FA8">/auth/* (JWT + refresh)</text>
+<text x="116" y="260" font-size="10.5" fill="#5B3FA8">GET /participants</text>
+<text x="116" y="274" font-size="10.5" fill="#5B3FA8">/participants/{id}/voice-*</text>
 <line x1="105" y1="230" x2="105" y2="284" stroke="#5B3FA8" stroke-width="1.6" marker-end="url(#arrow)"/>
 
-<text x="330" y="259" font-size="12" fill="#0F6E56" text-anchor="middle">POST /upload (multipart)</text>
+<text x="341" y="261" font-size="12" fill="#0F6E56">POST /upload (multipart)</text>
 <line x1="330" y1="230" x2="330" y2="284" stroke="#0F6E56" stroke-width="1.6" marker-end="url(#arrow)"/>
 
-<text x="620" y="259" font-size="12" fill="#185FA5" text-anchor="middle">GET /status · WS /ws · GET /resultado</text>
+<text x="631" y="253" font-size="12" fill="#185FA5">GET /status · WS /ws · GET /resultado</text>
+<text x="631" y="269" font-size="12" fill="#185FA5">GET /meetings</text>
 <line x1="620" y1="284" x2="620" y2="230" stroke="#185FA5" stroke-width="1.6" marker-end="url(#arrow)"/>
 
 <!-- BACKEND -->
@@ -46,11 +48,13 @@
 
 <rect x="50" y="330" width="250" height="60" rx="10" fill="#FAECE7" stroke="#993C1D" stroke-width="1"/>
 <text x="175" y="356" font-size="13.5" font-weight="bold" text-anchor="middle" fill="#4A1B0C">API — FastAPI</text>
-<text x="175" y="376" font-size="11.5" text-anchor="middle" fill="#993C1D">app/api — upload · status · resultado · voz</text>
+<text x="175" y="374" font-size="11" text-anchor="middle" fill="#993C1D">app/api — auth · upload · status · resultado</text>
+<text x="175" y="387" font-size="11" text-anchor="middle" fill="#993C1D">meetings · participants · voz</text>
 
 <rect x="335" y="330" width="250" height="60" rx="10" fill="#FAEEDA" stroke="#854F0B" stroke-width="1"/>
-<text x="460" y="356" font-size="13.5" font-weight="bold" text-anchor="middle" fill="#412402">Job Executor</text>
-<text x="460" y="376" font-size="11.5" text-anchor="middle" fill="#854F0B">execução em background thread</text>
+<text x="460" y="352" font-size="13.5" font-weight="bold" text-anchor="middle" fill="#412402">Worker dedicado</text>
+<text x="460" y="370" font-size="11.5" text-anchor="middle" fill="#854F0B">processo separado da API</text>
+<text x="460" y="384" font-size="10" text-anchor="middle" fill="#854F0B">sem ele, o job fica em queued para sempre</text>
 
 <rect x="620" y="330" width="250" height="60" rx="10" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="1"/>
 <text x="745" y="356" font-size="13.5" font-weight="bold" text-anchor="middle" fill="#2C2C2A">Repositories</text>
@@ -97,5 +101,8 @@
 
 <line x1="370" y1="502" x2="370" y2="522" stroke="#3B6D11" stroke-width="1.4" marker-end="url(#arrow)"/>
 <rect x="230" y="522" width="280" height="26" rx="6" fill="#EAF3DE" stroke="#3B6D11" stroke-dasharray="3,2"/>
-<text x="370" y="539" font-size="11" text-anchor="middle" fill="#173404">VoiceRepository — embeddings por participant_id</text>
+<text x="370" y="539" font-size="11" text-anchor="middle" fill="#173404">VoiceRepository — embeddings por participant_id, escopados por user_id</text>
+
+<text x="30" y="618" font-size="11.5" font-weight="bold" fill="#26215C">Toda rota exige Authorization: Bearer, exceto /auth/register, /auth/login, /auth/refresh e /health.</text>
+<text x="30" y="640" font-size="11" fill="#6B7280">Jobs, resultados e perfis de voz são escopados por user_id no servidor: /status e /resultado devolvem 404 tanto para job inexistente quanto para job de outro dono.</text>
 </svg>

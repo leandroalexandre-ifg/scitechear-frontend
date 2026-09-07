@@ -20,6 +20,7 @@ seguintes.
 | 3 | [`participant_id`](03-participant-ids.md) | Os ids **não** são estáveis: reinstalar órfãva todos os perfis de voz. A fila de exclusões pendentes nasce aqui. |
 | 4 | [`GET /participants`](04-get-participants.md) | A rota de listagem resolve a reinstalação: o cadastro é semeado de volta em vez de recriado com ids novos. |
 | 5 | [Smoke do contrato](05-smoke-contrato.md) | `DELETE .../voice-profile` é 204 sempre; o `4401` do WebSocket nunca chegava a cliente nenhum. |
+| 6 | [Diagramas desatualizados](06-diagramas-desatualizados.md) | Quatro dos cinco SVG tinham ficado para trás — o pior deles mostrava o processamento como thread da API, e não como worker dedicado. Pede espelhamento. |
 
 ## Três coisas que estes documentos estabeleceram, e que continuam valendo
 

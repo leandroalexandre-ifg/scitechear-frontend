@@ -16,7 +16,7 @@
 <text x="325" y="77" fill="#4A1B0C">API (FastAPI)</text>
 
 <rect x="470" y="54" width="150" height="36" rx="8" fill="#FAEEDA" stroke="#854F0B"/>
-<text x="545" y="77" fill="#412402">Job Executor</text>
+<text x="545" y="77" fill="#412402">Worker dedicado</text>
 
 <rect x="690" y="54" width="150" height="36" rx="8" fill="#E1F5EE" stroke="#0F6E56"/>
 <text x="765" y="77" fill="#04342C">Pipeline (7 estágios)</text>
@@ -31,7 +31,7 @@
 <g font-size="11.5" fill="#111827">
 <!-- 1 -->
 <line x1="105" y1="112" x2="323" y2="112" stroke="#374151" stroke-width="1.4" marker-end="url(#arrow4)"/>
-<text x="115" y="106">1. POST /upload (áudio WAV + participants JSON)</text>
+<text x="115" y="106">1. POST /upload — Authorization: Bearer &lt;access_token&gt; (áudio WAV + participants JSON)</text>
 
 <line x1="325" y1="136" x2="107" y2="136" stroke="#374151" stroke-width="1.4" marker-end="url(#arrow4)"/>
 <text x="115" y="130">2. 202 Accepted { job_id, status: "queued" }</text>
@@ -40,11 +40,11 @@
 <text x="335" y="154">3. cria job, salva áudio, dispara execução</text>
 
 <line x1="545" y1="184" x2="763" y2="184" stroke="#374151" stroke-width="1.4" marker-end="url(#arrow4)"/>
-<text x="555" y="178">4. executar(job_id) em background thread</text>
+<text x="555" y="178">4. o worker (processo separado) tira o job da fila</text>
 
 <!-- polling loop box -->
 <rect x="95" y="204" width="750" height="238" rx="10" fill="none" stroke="#9CA3AF" stroke-width="1" stroke-dasharray="5,3"/>
-<text x="105" y="222" font-style="italic" fill="#6B7280">loop — enquanto status ≠ done/error (WebSocket com fallback de polling a cada 3s)</text>
+<text x="105" y="222" font-style="italic" fill="#6B7280">loop — WS /ws/{job_id}?token= empurra o estado a cada 1s até done/error; polling GET /status a cada 3s como plano B obrigatório</text>
 
 <text x="765" y="246" text-anchor="middle" font-weight="bold" fill="#04342C">transcribing</text>
 <text x="765" y="264" text-anchor="middle" fill="#3B6D11" font-size="10.5">WhisperX gera segments</text>
@@ -71,6 +71,7 @@
 <line x1="325" y1="504" x2="107" y2="504" stroke="#374151" stroke-width="1.4" marker-end="url(#arrow4)"/>
 <text x="115" y="498">8. 200 { segments[], questions[], metadata } — dados reais, nunca fixture</text>
 
-<text x="115" y="530" font-style="italic" fill="#B45309">Em qualquer falha: status = "error" { code, message } — app mostra erro real com retry, nunca inventa resultado.</text>
+<text x="115" y="530" font-style="italic" fill="#B45309">Em qualquer falha: status = "error" { code, message } — o app traduz o code para português e oferece retry, nunca inventa resultado.</text>
+<text x="115" y="552" font-style="italic" fill="#6B7280">Antes do passo 1, o ApiClient renova o access token se faltarem menos de 2 min: um upload multipart que tomasse 401 teria o corpo já consumido.</text>
 </g>
 </svg>
