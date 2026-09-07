@@ -45,6 +45,16 @@ class _RecordingScreenState extends State<RecordingScreen>
   Duration _elapsed = Duration.zero;
   Timer? _timer;
   StreamSubscription<Amplitude>? _ampSub;
+  StreamSubscription<RecordState>? _stateSub;
+
+  // Gravação interrompida pelo próprio aparelho, sem o usuário pedir.
+  String? _recordingError;
+  // Caminho devolvido por `start()`, guardado como rede de segurança para
+  // recuperar o áudio parcial caso `stop()` não devolva nada.
+  String? _currentPath;
+  // Guard sincrônico: a falha nativa chega como erro *e* como estado
+  // `stop`, e os dois disparariam o mesmo tratamento.
+  bool _handlingInterruption = false;
 
   // Waveform: 50 barras de amplitude normalizada
   final List<double> _bars = List<double>.generate(50, (_) => 0.02);
@@ -69,6 +79,7 @@ class _RecordingScreenState extends State<RecordingScreen>
   void dispose() {
     _timer?.cancel();
     _ampSub?.cancel();
+    _stateSub?.cancel();
     _pulseCtrl.dispose();
     _stopBtnCtrl.dispose();
     _audio.dispose();
@@ -96,9 +107,11 @@ class _RecordingScreenState extends State<RecordingScreen>
     }
 
     try {
-      await _audio.start();
+      _currentPath = await _audio.start(persistent: true);
       setState(() {
         _isRecording = true;
+        _handlingInterruption = false;
+        _recordingError = null;
         _elapsed = Duration.zero;
         for (var i = 0; i < _bars.length; i++) {
           _bars[i] = 0.02;
@@ -119,15 +132,85 @@ class _RecordingScreenState extends State<RecordingScreen>
           _bars.add(normalized);
         });
       });
+
+      // Estado do gravador nativo. Uma parada que chegue por aqui nunca é
+      // a do usuário — `_stopAndUpload` cancela esta inscrição antes de
+      // chamar `stop()` —, então significa que o aparelho encerrou a
+      // gravação sozinho e o áudio ficou truncado.
+      _stateSub = _audio.stateStream.listen(
+        (state) {
+          if (state == RecordState.stop) {
+            _handleUnexpectedStop(
+                'A gravação foi encerrada pelo sistema do aparelho.');
+          }
+        },
+        onError: (Object error, StackTrace stack) {
+          debugPrint('Gravador nativo falhou: $error');
+          _handleUnexpectedStop(
+              'O microfone do aparelho falhou durante a gravação.');
+        },
+      );
     } catch (e) {
       await _background.disable();
       _showSnack('Erro ao iniciar a gravação: $e');
     }
   }
 
-  Future<void> _stopAndUpload() async {
+  /// Reage a uma parada do gravador que o usuário não pediu.
+  ///
+  /// O caso conhecido é o `AudioRecord.ERROR_DEAD_OBJECT` no Android
+  /// (comum em aparelhos Samsung sob otimização agressiva de bateria): a
+  /// thread nativa captura a exceção, finaliza o WAV com um header
+  /// correto e encerra. O arquivo fica íntegro — só que truncado no ponto
+  /// da falha. Sem esta reação, o app seguia mostrando o cronômetro
+  /// correndo sobre uma gravação que já tinha morrido, e o usuário só
+  /// descobria a perda depois do processamento.
+  ///
+  /// O lado nativo emite `onFailure(ex)` e, no `finally`, `onStop()` — os
+  /// dois chegam aqui, daí o guard sincrônico logo na entrada.
+  Future<void> _handleUnexpectedStop(String cause) async {
+    if (!_isRecording || _handlingInterruption) return;
+    _handlingInterruption = true;
+
     _timer?.cancel();
     _ampSub?.cancel();
+    _stateSub?.cancel();
+
+    final captured = _elapsed;
+
+    // A thread nativa já não existe mais, então `stop()` apenas devolve o
+    // caminho configurado, sem lançar. `_currentPath` cobre o caso de ela
+    // devolver nulo.
+    String? path;
+    try {
+      path = await _audio.stop();
+    } catch (e) {
+      debugPrint('Falha ao finalizar a gravação interrompida: $e');
+    }
+    path ??= _currentPath;
+
+    await _background.disable();
+
+    if (!mounted) return;
+    setState(() {
+      _isRecording = false;
+      _bars.fillRange(0, _bars.length, 0.02);
+      _pendingAudioPath = path;
+      _recordingError = path == null
+          ? '$cause Não foi possível recuperar o áudio desta reunião.'
+          : '$cause Só foram gravados os primeiros ${_fmt(captured)} — '
+              'o restante da conversa não foi capturado.';
+    });
+  }
+
+  Future<void> _stopAndUpload() async {
+    // Uma interrupção em andamento já está cuidando de parar e recuperar o
+    // áudio; deixar o toque do usuário seguir causaria um segundo envio.
+    if (_handlingInterruption) return;
+
+    _timer?.cancel();
+    _ampSub?.cancel();
+    _stateSub?.cancel();
     _stopBtnCtrl.forward();
 
     final path = await _audio.stop();
@@ -214,11 +297,36 @@ class _RecordingScreenState extends State<RecordingScreen>
     _attemptUpload(path);
   }
 
+  /// Envia o trecho que sobreviveu a uma interrupção. Truncado é melhor do
+  /// que perdido: o backend processa normalmente o que receber.
+  void _sendPartialRecording() {
+    final path = _pendingAudioPath;
+    if (path == null) return;
+    setState(() => _recordingError = null);
+    _attemptUpload(path);
+  }
+
+  void _discardRecording() {
+    setState(() {
+      _recordingError = null;
+      _pendingAudioPath = null;
+      _currentPath = null;
+      _elapsed = Duration.zero;
+    });
+  }
+
   void _showSnack(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(msg)),
     );
+  }
+
+  String _statusLabel() {
+    if (_isUploading) return 'Enviando áudio…';
+    if (_recordingError != null) return 'Gravação interrompida';
+    if (_isRecording) return 'Gravando • pode bloquear a tela';
+    return 'Toque para começar';
   }
 
   String _fmt(Duration d) {
@@ -375,18 +483,17 @@ class _RecordingScreenState extends State<RecordingScreen>
 
           const SizedBox(height: 6),
           Text(
-            _isUploading
-                ? 'Enviando áudio…'
-                : _isRecording
-                    ? 'Gravando • pode bloquear a tela'
-                    : 'Toque para começar',
+            _statusLabel(),
             style: GoogleFonts.inter(
-              color: _isRecording
-                  ? AppColors.recording
-                  : AppColors.textSecondary,
+              color: _recordingError != null
+                  ? AppColors.error
+                  : _isRecording
+                      ? AppColors.recording
+                      : AppColors.textSecondary,
               fontSize: 14,
-              fontWeight:
-                  _isRecording ? FontWeight.w500 : FontWeight.normal,
+              fontWeight: _isRecording || _recordingError != null
+                  ? FontWeight.w500
+                  : FontWeight.normal,
             ),
           ).animate().fadeIn(duration: 400.ms),
 
@@ -410,59 +517,96 @@ class _RecordingScreenState extends State<RecordingScreen>
     );
   }
 
-  Widget _buildBottomSection() {
-    if (_uploadError != null) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 28),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: AppColors.error.withAlpha(25),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: AppColors.error.withAlpha(80)),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(Icons.error_outline_rounded,
-                      color: AppColors.error, size: 20),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      _uploadError!,
-                      style: GoogleFonts.inter(
-                        color: AppColors.textPrimary,
-                        fontSize: 13,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+  /// Banner de erro com as ações que o usuário tem a partir dele.
+  Widget _buildErrorSection({
+    required IconData icon,
+    required String message,
+    required List<Widget> actions,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 28),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: AppColors.error.withAlpha(25),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: AppColors.error.withAlpha(80)),
             ),
-            const SizedBox(height: 14),
-            Row(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                Icon(icon, color: AppColors.error, size: 20),
+                const SizedBox(width: 10),
                 Expanded(
-                  child: OutlinedButton(
-                    onPressed: () => setState(() => _uploadError = null),
-                    child: const Text('Descartar'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: _retryUpload,
-                    icon: const Icon(Icons.refresh_rounded, size: 18),
-                    label: const Text('Tentar enviar novamente'),
+                  child: Text(
+                    message,
+                    style: GoogleFonts.inter(
+                      color: AppColors.textPrimary,
+                      fontSize: 13,
+                    ),
                   ),
                 ),
               ],
             ),
+          ),
+          const SizedBox(height: 14),
+          Row(children: actions),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBottomSection() {
+    // A gravação morreu no meio: o usuário decide o que fazer com o
+    // trecho recuperado antes de qualquer outra coisa.
+    if (_recordingError != null) {
+      return _buildErrorSection(
+        icon: Icons.mic_off_rounded,
+        message: _recordingError!,
+        actions: [
+          Expanded(
+            child: OutlinedButton(
+              onPressed: _discardRecording,
+              child: const Text('Descartar'),
+            ),
+          ),
+          if (_pendingAudioPath != null) ...[
+            const SizedBox(width: 12),
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: _sendPartialRecording,
+                icon: const Icon(Icons.upload_rounded, size: 18),
+                label: const Text('Enviar o que foi gravado'),
+              ),
+            ),
           ],
-        ),
+        ],
+      );
+    }
+
+    if (_uploadError != null) {
+      return _buildErrorSection(
+        icon: Icons.error_outline_rounded,
+        message: _uploadError!,
+        actions: [
+          Expanded(
+            child: OutlinedButton(
+              onPressed: () => setState(() => _uploadError = null),
+              child: const Text('Descartar'),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: FilledButton.icon(
+              onPressed: _retryUpload,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Tentar enviar novamente'),
+            ),
+          ),
+        ],
       );
     }
 

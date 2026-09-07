@@ -9,6 +9,11 @@ class AudioService {
   Stream<Amplitude> get amplitudeStream =>
       _recorder.onAmplitudeChanged(const Duration(milliseconds: 80));
 
+  // Estado nativo do gravador (record/pause/stop) — inclui erros do
+  // gravador nativo (ex.: AudioRecord.ERROR_DEAD_OBJECT) via onError do
+  // stream, não como um RecordState em si.
+  Stream<RecordState> get stateStream => _recorder.onStateChanged();
+
   Future<bool> requestPermission() async {
     final status = await Permission.microphone.request();
     return status.isGranted;
