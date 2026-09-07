@@ -282,13 +282,19 @@ arquivo do servidor dentro.
 
 **Validado ponta a ponta em 07/09/2026**, contra a API implantada com o
 worker rodando: cadastro e login de duas contas pelo app, participante com
-amostra de voz, e uma reunião de 40 segundos subindo, processando até `done`
-e abrindo na tela de resultado.
+amostra de voz, uma reunião de 40 segundos subindo e processando até `done`,
+e o **isolamento entre as duas contas** — entrar com a segunda conta mostra
+histórico e participantes vazios, e voltar para a primeira traz tudo de
+volta.
 
-Ainda **não** exercitado, e por isso ainda não pode ser chamado de pronto: o
-isolamento entre as duas contas (passos 6–7 do roteiro), reunião longa
-(>10 min), a detecção de truncamento do gravador e a semeadura do cadastro
-depois de reinstalar. Nenhum falhou — nenhum chegou a ser tentado.
+O isolamento prova duas coisas de uma vez, e não só uma: as chaves do
+`shared_preferences` estão escopadas por `user_id` **e** o servidor não vaza
+participantes de uma conta para o token da outra — porque entrar numa conta
+com cadastro local vazio dispara `GET /participants`, e a lista voltou vazia.
+
+Ainda **não** exercitado: reunião longa (>10 min), a detecção de truncamento
+do gravador e a semeadura do cadastro depois de reinstalar. Nenhum falhou —
+nenhum chegou a ser tentado.
 
 ### Como a sessão funciona
 

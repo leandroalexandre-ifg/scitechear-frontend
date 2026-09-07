@@ -10,6 +10,19 @@ dos dois `--dart-define` que já existiam. O que muda é o que responde do outro
 lado de `127.0.0.1:8000`, e o app não sabe a diferença — que é justamente o
 motivo de o túnel SSH ter sido a escolha.
 
+## Estado — 07/09/2026
+
+**Os passos 3 a 7 do roteiro passaram**, contra a API implantada com o worker
+rodando: as duas contas cadastradas e logadas pelo app, participante com
+amostra de voz, uma reunião de 40 segundos processada até `done`, e o
+isolamento confirmado nos dois sentidos (conta B vazia, conta A intacta ao
+voltar).
+
+Falta, e o documento continua servindo para isso: **reunião longa (>10 min)**,
+que é também a chance de a detecção de truncamento aparecer, e o **passo 8**
+da seção 4 (reinstalar e ver o cadastro voltar). O resto abaixo permanece
+válido — o roteiro é para repetir, não para arquivar.
+
 ---
 
 ## 1. Comando
@@ -108,7 +121,8 @@ que reinstalar deixe perfis de voz órfãos no servidor. Custa dois minutos e
 não suja nada: se falhar, o pior caso é o cadastro voltar vazio, e aí basta
 recadastrar.
 
-Não está no roteiro combinado. Só faça se os passos 1–7 tiverem passado.
+Não está no roteiro combinado. Os passos 1–7 já passaram (07/09/2026), então
+este é o próximo, junto com a reunião longa.
 
 ---
 

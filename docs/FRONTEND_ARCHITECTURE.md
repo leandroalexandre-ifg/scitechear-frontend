@@ -652,12 +652,24 @@ encadeado ao `adb reverse`:
 | Cadastro e login de duas contas `@ifg.edu.br`, pelo app | ✅ |
 | Participante cadastrado com amostra de voz enviada | ✅ |
 | Upload, processamento até `done` e tela de resultado | ✅ (reunião de 40 s) |
+| Entrar na conta B: histórico e participantes vazios | ✅ |
+| Voltar para a conta A: tudo reaparece | ✅ |
 
-**Ainda não exercitado:** o isolamento entre as duas contas (sair de uma,
-entrar na outra e conferir que histórico e participantes aparecem vazios),
-reunião longa (>10 min), a detecção de truncamento do gravador, e a
-semeadura do cadastro após reinstalar. Nenhum deles falhou — nenhum deles
-chegou a ser tentado.
+As duas últimas linhas provam mais do que provavam quando o roteiro foi
+escrito. Entrar numa conta cujo cadastro local está vazio dispara
+`GET /participants` (seção 4.1) — então uma lista vazia para B significa
+simultaneamente que **as chaves locais estão escopadas por `user_id`** e que
+**o servidor não vaza participantes de A para o token de B**. Antes da
+semeadura, o passo 6 só podia provar a primeira metade.
+
+Vale registrar o que isso fecha: a sessão sobreviveu a um logout e a dois
+logins seguidos no mesmo aparelho, com o `LocalScope` trocando de prefixo
+duas vezes e nenhum dado atravessando. É o cenário que motivou o escopo por
+usuário, e era o único ainda não visto acontecer.
+
+**Ainda não exercitado:** reunião longa (>10 min), a detecção de truncamento
+do gravador, e a semeadura do cadastro após reinstalar. Nenhum deles falhou —
+nenhum deles chegou a ser tentado.
 
 ### Contra o backend implantado
 
