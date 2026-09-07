@@ -4,8 +4,9 @@ class Participant {
   final String? voiceSamplePath;
   final int colorIndex;
 
-  /// True quando `voiceSamplePath` já foi sincronizado com o backend via
-  /// POST /participants/{id}/voice-samples.
+  /// True quando o servidor tem o perfil de voz deste participante — porque
+  /// `voiceSamplePath` foi enviado via POST /participants/{id}/voice-samples,
+  /// ou porque `GET /participants` o listou.
   final bool voiceProfileSynced;
 
   const Participant({
@@ -16,7 +17,16 @@ class Participant {
     this.voiceProfileSynced = false,
   });
 
+  /// Há um WAV **neste aparelho** — o que `syncVoiceSample` tem para enviar.
   bool get hasVoiceSample => voiceSamplePath != null;
+
+  /// Esta pessoa tem voz cadastrada, aqui ou no servidor.
+  ///
+  /// Depois de reinstalar o app, `GET /participants` devolve os participantes
+  /// da conta e o cadastro é semeado de volta: eles têm perfil de voz no
+  /// servidor e nenhum arquivo local. É esta a pergunta que a tela faz — "esta
+  /// pessoa precisa gravar voz?" —, não a de [hasVoiceSample].
+  bool get hasVoiceProfile => voiceProfileSynced || hasVoiceSample;
 
   Participant copyWith({
     String? name,

@@ -431,11 +431,11 @@ class _ParticipantCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  participant.hasVoiceSample
-                      ? '✓ Amostra de voz gravada'
+                  participant.hasVoiceProfile
+                      ? '✓ Voz cadastrada'
                       : 'Sem amostra de voz',
                   style: GoogleFonts.inter(
-                    color: participant.hasVoiceSample
+                    color: participant.hasVoiceProfile
                         ? AppColors.success
                         : AppColors.textSecondary,
                     fontSize: 12,

@@ -39,18 +39,13 @@ class _ParticipantsScreenState extends State<ParticipantsScreen> {
     });
   }
 
-  /// Acerta as contas com o servidor: primeiro as exclusões que ficaram
-  /// pendentes, depois o estado dos perfis que restaram.
+  /// Acerta as contas com o servidor, em uma chamada.
   ///
   /// Roda depois do [_load] local, não no lugar dele: a tela abre na hora com
-  /// o que está no aparelho, e o selo de sincronizado se corrige sozinho
-  /// quando o servidor responde. Sem rede, nada muda.
-  ///
-  /// As exclusões vêm antes por serem as urgentes — cada uma pendente é uma
-  /// gravação de voz sobrando num servidor compartilhado.
+  /// o que está no aparelho, e se completa quando o servidor responde. Sem
+  /// rede, nada muda.
   Future<void> _reconcile() async {
-    await _service.retryPendingDeletions();
-    final list = await _service.reconcileVoiceProfiles();
+    final list = await _service.syncFromServer();
     if (!mounted) return;
     setState(() => _participants = list);
   }
@@ -152,6 +147,23 @@ class _ParticipantsScreenState extends State<ParticipantsScreen> {
         },
       ),
     );
+  }
+
+  /// Quatro estados possíveis, e o quarto é novo: o participante veio de
+  /// `GET /participants` depois de uma reinstalação — a voz está no servidor,
+  /// e o WAV não está neste aparelho. Não há nada para o usuário fazer, e
+  /// dizer "sem amostra de voz" o mandaria regravar à toa.
+  String _voiceStatusLabel(Participant p) {
+    if (!p.hasVoiceProfile) return 'Sem amostra de voz';
+    if (!p.voiceProfileSynced) return 'Amostra gravada — não sincronizada';
+    if (!p.hasVoiceSample) return '✓ Voz cadastrada no servidor';
+    return '✓ Amostra sincronizada';
+  }
+
+  Color _voiceStatusColor(Participant p) {
+    if (!p.hasVoiceProfile) return AppColors.textSecondary;
+    if (!p.voiceProfileSynced) return const Color(0xFFFBBF24);
+    return AppColors.success;
   }
 
   void _showSnack(String message) {
@@ -344,17 +356,9 @@ class _ParticipantsScreenState extends State<ParticipantsScreen> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        !p.hasVoiceSample
-                            ? 'Sem amostra de voz'
-                            : p.voiceProfileSynced
-                                ? '✓ Amostra sincronizada'
-                                : 'Amostra gravada — não sincronizada',
+                        _voiceStatusLabel(p),
                         style: GoogleFonts.inter(
-                          color: !p.hasVoiceSample
-                              ? AppColors.textSecondary
-                              : p.voiceProfileSynced
-                                  ? AppColors.success
-                                  : const Color(0xFFFBBF24),
+                          color: _voiceStatusColor(p),
                           fontSize: 12,
                         ),
                       ),
@@ -365,14 +369,14 @@ class _ParticipantsScreenState extends State<ParticipantsScreen> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     IconBtn(
-                      icon: p.hasVoiceSample
+                      icon: p.hasVoiceProfile
                           ? Icons.mic_rounded
                           : Icons.mic_none_rounded,
-                      color: p.hasVoiceSample
+                      color: p.hasVoiceProfile
                           ? AppColors.success
                           : AppColors.primary,
                       onTap: () => _recordVoiceSample(p),
-                      tooltip: p.hasVoiceSample
+                      tooltip: p.hasVoiceProfile
                           ? 'Regravar amostra'
                           : 'Gravar amostra de voz',
                     ),

@@ -21,21 +21,29 @@ class VoiceSampleException implements Exception {
   String toString() => message;
 }
 
-/// Estado do perfil de voz de um participante **segundo o servidor**.
+/// Um participante como o servidor o conhece, vindo de `GET /participants`.
 ///
-/// Vem de `GET /participants/{id}/voice-profile`. Existe porque o app e o
-/// servidor podem discordar: uma queda de rede no meio do envio da amostra
-/// deixa o app achando que não sincronizou (ou que sincronizou) sem que isso
-/// corresponda ao que o backend guardou.
-class VoiceProfileStatus {
-  final bool exists;
+/// O `name` é o `display_name` que o app mandou junto da amostra de voz, e
+/// **pode ser nulo** — é opcional no cadastro de amostra, e um cliente que não
+/// o envie deixa o perfil sem nome. O `participantId`, que é o que importa
+/// recuperar, vem sempre.
+class RemoteParticipant {
+  final String participantId;
+  final String? name;
   final int sampleCount;
 
-  const VoiceProfileStatus({required this.exists, required this.sampleCount});
+  const RemoteParticipant({
+    required this.participantId,
+    this.name,
+    this.sampleCount = 0,
+  });
 
-  factory VoiceProfileStatus.fromJson(Map<String, dynamic> json) =>
-      VoiceProfileStatus(
-        exists: json['exists'] as bool? ?? false,
+  factory RemoteParticipant.fromJson(Map<String, dynamic> json) =>
+      RemoteParticipant(
+        participantId: json['participant_id'].toString(),
+        name: (json['name'] as String?)?.trim().isNotEmpty == true
+            ? (json['name'] as String).trim()
+            : null,
         sampleCount: (json['sample_count'] as num?)?.toInt() ?? 0,
       );
 }
@@ -135,46 +143,105 @@ class ParticipantService {
     await update(participant.copyWith(voiceProfileSynced: true));
   }
 
-  /// Estado do perfil de voz no servidor, ou `null` se não deu para perguntar.
+  /// Os participantes desta conta segundo o servidor, ou `null` se não deu
+  /// para perguntar.
   ///
-  /// `null` é "não sei", e não "não existe": tratar falha de rede como
-  /// ausência faria a tela dizer que a biometria sumiu toda vez que o servidor
-  /// estivesse fora do ar.
-  Future<VoiceProfileStatus?> fetchVoiceProfile(String id) async {
+  /// `null` é "não sei", e não "não existe". A distinção é o que impede uma
+  /// queda de rede de virar "esta conta não tem participante nenhum" — e, daí,
+  /// de apagar cadastro válido.
+  Future<List<RemoteParticipant>?> fetchRemoteParticipants() async {
     try {
-      final response = await _dio.get('/participants/$id/voice-profile');
-      return VoiceProfileStatus.fromJson(
-          response.data as Map<String, dynamic>);
+      final response = await _dio.get('/participants');
+      final list = response.data as List<dynamic>;
+      return list
+          .map((e) => RemoteParticipant.fromJson(e as Map<String, dynamic>))
+          .toList();
     } catch (_) {
       return null;
     }
   }
 
-  /// Alinha o `voiceProfileSynced` local ao que o servidor de fato tem.
+  /// Acerta o cadastro local com o servidor, em uma chamada.
   ///
-  /// Consulta um participante por vez (o endpoint é por id) e só grava quando
-  /// há divergência. Serve para o caso de o envio da amostra cair no meio: o
-  /// app pode estar mostrando "não sincronizado" para uma amostra que chegou,
-  /// ou o contrário, se o perfil foi apagado no servidor.
+  /// Três coisas, nesta ordem:
   ///
-  /// Best-effort: participante que não respondeu fica como está.
-  Future<List<Participant>> reconcileVoiceProfiles() async {
+  /// 1. **Retoma as exclusões pendentes.** Precisa vir antes da listagem: um
+  ///    perfil que o usuário mandou apagar sem rede ainda existe no servidor,
+  ///    e semeá-lo de volta ressuscitaria justamente o que ele removeu.
+  /// 2. **Semeia o que só existe no servidor.** É o caso da reinstalação: o
+  ///    cadastro local está vazio, o servidor tem os perfis, e o usuário
+  ///    reencontra as pessoas em vez de recadastrá-las com ids novos. Sem
+  ///    isso, o perfil antigo ficaria órfão — invisível e inapagável, já que
+  ///    o id é a única forma de alcançá-lo.
+  /// 3. **Corrige o selo do que já era conhecido.** Um perfil que sumiu do
+  ///    servidor volta a "não sincronizado", mas o participante **não** é
+  ///    apagado daqui: o cadastro é do usuário, e some só quando ele mandar.
+  ///
+  /// Falha de rede não muda nada — devolve o local como está.
+  Future<List<Participant>> syncFromServer() async {
+    await retryPendingDeletions();
+
+    final remote = await fetchRemoteParticipants();
+    if (remote == null) return loadAll();
+
+    // Um id que ainda está na fila continua sendo uma exclusão que o usuário
+    // pediu e o servidor não confirmou. Não pode voltar como cadastro.
+    final pending = (await pendingDeletions()).toSet();
+    final byId = {
+      for (final r in remote)
+        if (!pending.contains(r.participantId)) r.participantId: r,
+    };
+
     final all = await loadAll();
     var changed = false;
 
     for (var i = 0; i < all.length; i++) {
       final p = all[i];
-      if (!p.hasVoiceSample) continue;
-      final remote = await fetchVoiceProfile(p.id);
-      if (remote == null) continue;
-      if (remote.exists != p.voiceProfileSynced) {
-        all[i] = p.copyWith(voiceProfileSynced: remote.exists);
+      final existsRemotely = byId.containsKey(p.id);
+      if (existsRemotely != p.voiceProfileSynced) {
+        all[i] = p.copyWith(voiceProfileSynced: existsRemotely);
         changed = true;
       }
     }
 
+    final known = all.map((p) => p.id).toSet();
+    for (final r in byId.values) {
+      if (known.contains(r.participantId)) continue;
+      all.add(Participant(
+        id: r.participantId,
+        name: r.name ?? _fallbackName(r.participantId),
+        // A voz está no servidor; o WAV não está neste aparelho — e não
+        // precisa estar. `hasVoiceProfile` é o que a tela pergunta.
+        voiceProfileSynced: true,
+        colorIndex: all.length,
+      ));
+      changed = true;
+    }
+
     if (changed) await _saveAll(all);
     return all;
+  }
+
+  /// Semeia o cadastro a partir do servidor quando não há nada local.
+  ///
+  /// É o caminho da instalação nova: entrar numa conta e reencontrar as
+  /// pessoas já cadastradas, com a voz pronta, sem nada para regravar. Não faz
+  /// nada quando já existe cadastro — aí quem acerta as contas é o
+  /// [syncFromServer] da tela de participantes.
+  Future<List<Participant>> seedFromServerIfEmpty() async {
+    final local = await loadAll();
+    if (local.isNotEmpty) return local;
+    return syncFromServer();
+  }
+
+  /// Nome de exibição para um perfil que o servidor tem sem `name`.
+  ///
+  /// Não acontece com o que este app cadastrou (ele sempre manda o `name`
+  /// junto da amostra), mas outro cliente pode ter deixado em branco. Os
+  /// últimos dígitos do id evitam uma lista de homônimos indistinguíveis.
+  String _fallbackName(String id) {
+    final suffix = id.length > 4 ? id.substring(id.length - 4) : id;
+    return 'Participante $suffix';
   }
 
   /// Remove o participante localmente (sempre) e tenta, best-effort, excluir

@@ -7,6 +7,7 @@ import '../models/participant.dart';
 import '../services/auth_service.dart';
 import '../services/meeting_service.dart';
 import '../services/offline_service.dart';
+import '../services/participant_service.dart';
 import '../services/status_service.dart';
 import '../widgets/glass_card.dart';
 import 'auth_screen.dart';
@@ -26,6 +27,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final _history = MeetingHistoryService();
   final _status = StatusService();
   final _resultCache = LocalResultCache();
+  final _participantService = ParticipantService();
   List<Meeting> _meetings = [];
   bool _loading = true;
   String? _openingMeetingId;
@@ -34,6 +36,12 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _loadMeetings();
+    // Instalação nova entrando numa conta que já tem participantes: semeia o
+    // cadastro a partir do servidor, para o usuário reencontrar as pessoas com
+    // a voz pronta em vez de recadastrá-las com ids novos — o que órfãria os
+    // perfis antigos. Em segundo plano e sem bloquear a tela: se falhar, a
+    // tela de participantes tenta de novo quando abrir.
+    _participantService.seedFromServerIfEmpty();
   }
 
   @override

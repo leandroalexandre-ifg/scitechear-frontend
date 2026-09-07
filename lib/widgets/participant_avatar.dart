@@ -46,7 +46,7 @@ class ParticipantAvatar extends StatelessWidget {
             ),
           ),
         ),
-        if (showCheckmark && participant.hasVoiceSample)
+        if (showCheckmark && participant.hasVoiceProfile)
           Positioned(
             bottom: -2,
             right: -2,
