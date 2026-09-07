@@ -173,7 +173,10 @@ POST   /participants/{participant_id}/voice-samples   (multipart: file, name?)
 GET    /participants/{participant_id}/voice-profile
        → { participant_id, exists, sample_count, model_version, updated_at }
        O app não usa: a listagem acima resolve o mesmo em uma chamada.
-DELETE /participants/{participant_id}/voice-profile   → 204
+DELETE /participants/{participant_id}/voice-profile   → 204 SEMPRE,
+       inclusive para perfil inexistente. Idempotente por desenho, para não
+       revelar a diferença entre "não é seu" e "não existe" — como o
+       /auth/logout. É no 204 que a fila de exclusões pendentes desarma.
 ```
 
 Estados do job: `queued`, `transcribing`, `diarizing`, `identifying`,

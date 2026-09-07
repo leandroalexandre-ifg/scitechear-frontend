@@ -110,8 +110,14 @@ class StatusService {
         },
         onDone: () {
           // Fechar sem status terminal significa "preciso continuar de outro
-          // jeito" (teto de 1h da conexão, queda de rede, o backend soltando
-          // a conexão na dúvida), nunca "o job acabou".
+          // jeito" (teto de 1h da conexão, queda de rede, 4401, 4404, o
+          // backend soltando a conexão na dúvida), nunca "o job acabou".
+          //
+          // O código de fechamento não é lido de propósito: quem classifica é
+          // a resposta HTTP do polling que vem em seguida. No 4401 o
+          // interceptor renova o token e refaz a chamada; no 4404 o 404 vira
+          // "reunião removida". Ler o close code aqui duplicaria as duas
+          // decisões num segundo lugar, com menos informação.
           if (lastStatus == 'done' || lastStatus == 'error') {
             controller.close();
           } else {

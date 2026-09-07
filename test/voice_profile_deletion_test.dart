@@ -102,9 +102,12 @@ void main() {
     expect(await service.pendingDeletions(), isEmpty);
   });
 
-  test('404 encerra a pendência — o perfil já não existe', () async {
-    // O objetivo era o perfil não existir mais, e ele não existe. Insistir
-    // manteria um id numa fila que nunca esvazia.
+  test('404 também encerra a pendência (rede de segurança)', () async {
+    // O backend devolve 204 sempre, inclusive para perfil inexistente — é
+    // idempotente por desenho, e é no 204 que a fila desarma (teste acima).
+    // Este caminho cobre um intermediário que devolva 404 no lugar dele:
+    // significa igualmente que o perfil não está lá, e tratá-lo como falha
+    // manteria o id numa fila que nunca esvazia.
     final service = await serviceWith(participant, _ScriptedAdapter((_) => _empty(404)));
 
     final remoteDeleted = await service.remove('p-1');

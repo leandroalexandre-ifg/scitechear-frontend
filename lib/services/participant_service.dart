@@ -265,8 +265,15 @@ class ParticipantService {
 
   /// Apaga o perfil de voz no servidor, guardando o id para depois se falhar.
   ///
-  /// 404 conta como sucesso: o objetivo era o perfil não existir mais, e ele
-  /// não existe. Insistir só manteria o id numa fila que nunca esvazia.
+  /// A rota devolve **204 sempre**, inclusive para perfil que não existe: é
+  /// idempotente por desenho, para não revelar a diferença entre "não é seu" e
+  /// "não existe" — mesma escolha do `/auth/logout`. É no 204 que a fila
+  /// desarma, e esse é o caminho normal.
+  ///
+  /// O 404 fica como rede de segurança para um intermediário (proxy, gateway)
+  /// que o devolva no lugar do backend: significa igualmente que o perfil não
+  /// está lá, e tratá-lo como falha manteria o id numa fila que nunca
+  /// esvazia. O backend não o emite (confirmado em 07/09/2026).
   Future<bool> _deleteRemoteProfile(String id) async {
     try {
       await _dio.delete('/participants/$id/voice-profile');
