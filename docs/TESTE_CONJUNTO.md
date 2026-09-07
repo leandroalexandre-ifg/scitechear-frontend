@@ -73,7 +73,9 @@ olhe para o app.
 ## 3. O que observar em cada passo
 
 **Passo 3 — cadastrar as duas contas.** Feito pelo app, com
-`<seu-usuario>+a@ifg.edu.br` e `+b@`. O `+` passa no validador local do app
+`<seu-usuario>+a@ifg.edu.br` e `+b@` — plus-addressing evita precisar de duas
+caixas de correio, e o backend não verifica o e-mail. O `+` passa no
+validador local do app
 (verificado). O app checa formato e mínimo de 8 caracteres **antes** de enviar,
 então erro de digitação não gasta tentativa do balde compartilhado.
 

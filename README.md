@@ -426,10 +426,13 @@ adb reverse tcp:8000 tcp:8000
 curl -s http://127.0.0.1:8000/health     # {"status":"ok"} antes de abrir o app
 ```
 
-Use o IP: `<nome-do-servidor>` não resolve (o search domain da máquina é
-`ifg.br`). Não há HTTPS neste caminho e não é descuido — o trecho
-aparelho→máquina é USB e o trecho máquina→servidor é o próprio SSH; o HTTP
-puro só existe em loopback dentro de cada máquina.
+Use o **IP** do servidor, não o nome: o search domain da máquina de dev é
+diferente do domínio do servidor, e o nome não resolve. O IP, o usuário e as
+portas estão com a equipe — este repositório é público e não os carrega.
+
+Não há HTTPS neste caminho, e não é descuido: o trecho aparelho→máquina é
+USB, o trecho máquina→servidor é o próprio SSH, e o HTTP puro só existe em
+loopback dentro de cada máquina.
 
 Duas consequências de tudo chegar como `127.0.0.1`:
 
