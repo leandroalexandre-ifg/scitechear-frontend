@@ -5,9 +5,15 @@ import 'api_client.dart';
 import 'local_scope.dart';
 
 /// Erro de autenticação com mensagem já pronta para exibir ao usuário.
+///
+/// [field] diz *onde* mostrar. Quando é `'email'`, o problema é do endereço
+/// digitado (domínio recusado, e-mail já cadastrado) e não da senha nem da
+/// rede: a tela ancora o erro no campo em vez de piscar um snackbar que some
+/// e deixa o formulário com aparência de válido.
 class AuthException implements Exception {
   final String message;
-  AuthException(this.message);
+  final String? field;
+  AuthException(this.message, {this.field});
 
   @override
   String toString() => message;
@@ -56,7 +62,7 @@ class AuthService {
       _currentUser = user;
       return user;
     } on DioException catch (e) {
-      throw AuthException(_messageFor(e, isLogin: true));
+      throw _errorFor(e, isLogin: true);
     }
   }
 
@@ -73,7 +79,7 @@ class AuthService {
         data: {'email': email, 'password': password, 'name': name},
       );
     } on DioException catch (e) {
-      throw AuthException(_messageFor(e, isLogin: false));
+      throw _errorFor(e, isLogin: false);
     }
     return login(email, password);
   }
@@ -121,48 +127,70 @@ class AuthService {
     return user;
   }
 
-  String _messageFor(DioException e, {required bool isLogin}) {
+  AuthException _errorFor(DioException e, {required bool isLogin}) {
     switch (e.type) {
       case DioExceptionType.connectionTimeout:
       case DioExceptionType.sendTimeout:
       case DioExceptionType.receiveTimeout:
-        return 'O servidor demorou demais para responder. Tente novamente.';
+        return AuthException(
+            'O servidor demorou demais para responder. Tente novamente.');
       case DioExceptionType.connectionError:
-        return 'Não foi possível conectar ao servidor. Verifique o endereço configurado e sua conexão.';
+        return AuthException(
+            'Não foi possível conectar ao servidor. Verifique o endereço configurado e sua conexão.');
       case DioExceptionType.badResponse:
-        return _messageForStatus(e, isLogin: isLogin);
+        return _errorForStatus(e, isLogin: isLogin);
       default:
-        return 'Falha na autenticação: ${e.message ?? 'erro desconhecido'}.';
+        return AuthException(
+            'Falha na autenticação: ${e.message ?? 'erro desconhecido'}.');
     }
   }
 
-  String _messageForStatus(DioException e, {required bool isLogin}) {
+  AuthException _errorForStatus(DioException e, {required bool isLogin}) {
     final status = e.response?.statusCode;
     switch (status) {
       case 401:
-        return 'E-mail ou senha incorretos.';
+        return AuthException('E-mail ou senha incorretos.');
+      case 403:
+        // O backend mantém uma allowlist de domínios institucionais
+        // (`AUTH_ALLOWED_EMAIL_DOMAINS`) e recusa o cadastro fora dela. É
+        // condição permanente do endereço, não algo que melhore tentando de
+        // novo — daí o erro no campo, e não um snackbar. A mensagem vem do
+        // servidor porque só ele sabe quais domínios valem hoje.
+        return AuthException(
+          _detailOf(e.response?.data) ??
+              'Este e-mail não pode ser usado para criar conta. '
+                  'Use seu e-mail institucional.',
+          field: 'email',
+        );
       case 409:
-        return 'Já existe uma conta com esse e-mail.';
+        return AuthException('Já existe uma conta com esse e-mail.',
+            field: 'email');
       case 429:
         final retryAfter = e.response?.headers.value('Retry-After');
         final seconds = int.tryParse(retryAfter ?? '');
         if (seconds != null) {
+          // O `Retry-After` do backend é a janela inteira (900s no login,
+          // 3600s no registro), não o tempo que falta. Dizer "em ~60 minutos"
+          // quando falta um seria mentir para mais; "até" é o limite superior,
+          // que é o que o número de fato garante.
           final minutes = (seconds / 60).ceil();
-          return 'Muitas tentativas. Tente novamente em '
-              '${minutes <= 1 ? 'cerca de 1 minuto' : 'cerca de $minutes minutos'}.';
+          return AuthException('Muitas tentativas. Aguarde até '
+              '${minutes <= 1 ? '1 minuto' : '$minutes minutos'} '
+              'antes de tentar de novo.');
         }
-        return 'Muitas tentativas. Tente novamente mais tarde.';
+        return AuthException('Muitas tentativas. Tente novamente mais tarde.');
       case 422:
         // Validação do Pydantic — a mensagem crua é uma estrutura aninhada,
         // ilegível para o usuário. O que de fato pode falhar aqui é o
         // formato do e-mail ou o mínimo de 8 caracteres da senha.
-        return isLogin
+        return AuthException(isLogin
             ? 'Dados inválidos. Confira o e-mail e a senha.'
-            : 'Dados inválidos. Use um e-mail válido e uma senha de pelo menos 8 caracteres.';
+            : 'Dados inválidos. Use um e-mail válido e uma senha de pelo menos 8 caracteres.');
       default:
         final detail = _detailOf(e.response?.data);
-        if (detail != null) return detail;
-        return 'O servidor recusou a requisição (código $status).';
+        if (detail != null) return AuthException(detail);
+        return AuthException(
+            'O servidor recusou a requisição (código $status).');
     }
   }
 

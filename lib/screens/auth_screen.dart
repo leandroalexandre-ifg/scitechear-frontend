@@ -24,6 +24,12 @@ class _AuthScreenState extends State<AuthScreen> {
   final _emailCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
 
+  /// Recusa do servidor referente ao e-mail digitado (domínio fora da
+  /// allowlist institucional, endereço já cadastrado). Fica visível no campo
+  /// até o próximo envio, porque nenhuma das duas causas se resolve tentando
+  /// de novo com o mesmo endereço — o usuário precisa ler e corrigir.
+  String? _serverEmailError;
+
   @override
   void dispose() {
     _nameCtrl.dispose();
@@ -40,10 +46,13 @@ class _AuthScreenState extends State<AuthScreen> {
     if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email)) {
       return 'E-mail inválido';
     }
-    return null;
+    return _serverEmailError;
   }
 
   Future<void> _submit() async {
+    // Limpa antes de validar: senão a recusa anterior reprovaria o formulário
+    // mesmo depois de o usuário corrigir o endereço.
+    _serverEmailError = null;
     if (!_formKey.currentState!.validate()) return;
     setState(() => _loading = true);
     try {
@@ -65,12 +74,20 @@ class _AuthScreenState extends State<AuthScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(e.toString().replaceAll('Exception: ', '')),
-          backgroundColor: AppColors.error,
-        ),
-      );
+      final message = e.toString().replaceAll('Exception: ', '');
+      if (e is AuthException && e.field == 'email') {
+        // Erro do endereço: mostra no campo, onde fica visível enquanto o
+        // usuário corrige, em vez de num snackbar que some em segundos.
+        setState(() => _serverEmailError = message);
+        _formKey.currentState!.validate();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(message),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -232,6 +249,10 @@ class _AuthScreenState extends State<AuthScreen> {
               GestureDetector(
                 onTap: () => setState(() {
                   _isLogin = !_isLogin;
+                  // A recusa é do cadastro (domínio, e-mail duplicado): não
+                  // faz sentido continuar aparecendo depois de trocar para o
+                  // login, onde as duas causas não se aplicam.
+                  _serverEmailError = null;
                   _formKey.currentState?.reset();
                 }),
                 child: Text(
@@ -271,6 +292,9 @@ class _AuthScreenState extends State<AuthScreen> {
         labelText: label,
         prefixIcon: Icon(icon, size: 20),
         suffixIcon: suffix,
+        // O `detail` do servidor pode ser uma frase inteira; com o padrão de
+        // uma linha ela sairia cortada com reticências.
+        errorMaxLines: 3,
       ),
     );
   }
