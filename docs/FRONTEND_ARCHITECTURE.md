@@ -277,6 +277,43 @@ acabou de preencher seria repassar a ele um detalhe da API); e `/auth/logout`
 precisa do refresh token no corpo para revogá-lo de fato — esquecer só
 localmente deixaria o token válido por 30 dias.
 
+### 4.0.1. `local_scope.dart` — isolamento dos dados no aparelho
+
+Tudo que o app persiste localmente — histórico de reuniões, cadastro de
+participantes e cache de transcrições — é escopado por usuário
+(`u<userId>:<chave>`).
+
+Isso virou obrigatório com a autenticação real, e por um motivo específico.
+O `logout()` do login mock fazia `prefs.clear()`, apagando tudo; o novo
+limpa só as chaves de sessão, o que é o comportamento certo (trocar de
+conta e voltar preserva os dados de cada um) mas abriria um vazamento entre
+contas enquanto as chaves fossem globais. O caso mais grave é o
+`LocalResultCache`: ele abre resultados **sem consultar o backend**, então
+quem entrasse depois no aparelho leria as transcrições de quem entrou
+antes, passando por baixo do escopo que o servidor aplica. Histórico e
+participantes (que carregam o caminho das amostras de voz, biometria de uma
+pessoa) tinham o mesmo problema.
+
+Duas decisões:
+
+- **Escopo, não limpeza.** Apagar no logout também resolveria o vazamento,
+  mas torraria o cadastro de participantes de quem só está saindo do app —
+  era o efeito colateral do `prefs.clear()` antigo. Escopar espelha o
+  modelo do backend, que já separa jobs e vozes por `user_id`.
+- **Adoção dos dados legados.** Na atualização, as chaves globais existentes
+  são movidas para o escopo do primeiro usuário que logar, e removidas.
+  Sem isso, histórico e participantes sumiriam da tela — continuariam no
+  disco, só que sob chaves que ninguém mais lê. O dono legítimo é
+  indeterminável em retrospecto; o primeiro a logar é o palpite mais
+  provável (o login era mock, de uso pessoal) e, de todo modo, melhor do que
+  deixar os dados visíveis para todos.
+
+Limitação conhecida: o escopo é das *chaves*, não dos arquivos. As amostras
+de voz e os WAVs de reunião ficam no diretório de documentos do app, sem
+separação por usuário. Não há caminho pela interface até eles (o cadastro
+que os referencia é escopado) e o diretório é privado ao app, mas o
+isolamento ali é mais fraco do que o das chaves.
+
 `AppUser.isAdmin` sobrou do login mock e hoje é sempre `false`: o
 `UserPublic` do backend não tem noção de papel. O campo e o selo de
 administrador na `HomeScreen` ficaram no lugar, inertes, à espera de o

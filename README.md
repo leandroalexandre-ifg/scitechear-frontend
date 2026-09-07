@@ -81,6 +81,7 @@ lib/
     result_screen.dart             # transcrição e perguntas extraídas
   services/
     api_client.dart                # tokens JWT, header Authorization e renovação automática
+    local_scope.dart               # escopo por usuário das chaves guardadas no aparelho
     auth_service.dart              # login/cadastro/logout contra /auth do backend
     audio_service.dart             # grava WAV 16kHz mono via `record`
     background_service.dart        # foreground service (Android) + wakelock
@@ -176,6 +177,7 @@ o backend nunca envia esse valor.
 | Amostra de voz | endpoint dedicado | envia uma vez no cadastro | ✅ em dia |
 | Push de progresso | `/ws` ainda é stub (Fase 8) | polling como fallback obrigatório | pendente **no backend** |
 | Histórico | `GET /meetings` | lista local em `shared_preferences` | divergente, não bloqueante |
+| Dados no aparelho | escopados por `user_id` | chaves escopadas (`local_scope.dart`) | ✅ em dia |
 | Papel de administrador | não existe | `AppUser.isAdmin` sobrou do login mock, sempre `false` | vestigial |
 
 ### Como a sessão funciona
@@ -228,6 +230,7 @@ flutter test
 - Não armazenar gravações permanentemente no dispositivo — enviar e descartar
 - Não guardar token fora do `api_client.dart` — uma segunda cópia dessincroniza na primeira renovação, e o app passa a alternar entre chamadas válidas e 401
 - Não criar `Dio` avulso para falar com o backend: use `ApiClient.instance.client()`, senão a requisição sai sem `Authorization`
+- Não gravar chave nova em `shared_preferences` com nome fixo — passe por `LocalScope.key()`, senão o dado fica visível para qualquer conta que use o aparelho depois
 - Não fazer o app cair em resultado fictício quando o backend falha — o modo demo é sempre uma escolha de compilação, nunca um fallback silencioso de rede
 
 ## Documentação de arquitetura

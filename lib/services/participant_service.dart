@@ -4,11 +4,14 @@ import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/participant.dart';
 import 'api_client.dart';
+import 'local_scope.dart';
 
 /// Cadastro persistente de participantes (com biometria de voz), reutilizável
 /// entre reuniões diferentes.
 class ParticipantService {
-  static const _key = 'registered_participants';
+  // Escopada por usuário: o cadastro inclui o caminho das amostras de voz,
+  // que são biometria de uma pessoa específica.
+  static String get _key => LocalScope.key('registered_participants');
 
   final Dio _dio = ApiClient.instance.client();
 

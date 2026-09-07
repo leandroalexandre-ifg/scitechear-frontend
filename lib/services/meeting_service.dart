@@ -1,10 +1,12 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/meeting.dart';
+import 'local_scope.dart';
 
 /// Histórico local de reuniões enviadas ao backend (metadados apenas).
 class MeetingHistoryService {
-  static const _key = 'meeting_history';
+  // Escopada por usuário: o histórico é de uma pessoa, não do aparelho.
+  static String get _key => LocalScope.key('meeting_history');
 
   Future<List<Meeting>> loadAll() async {
     final prefs = await SharedPreferences.getInstance();

@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 
 import '../models/user.dart';
 import 'api_client.dart';
+import 'local_scope.dart';
 
 /// Erro de autenticação com mensagem já pronta para exibir ao usuário.
 class AuthException implements Exception {
@@ -104,13 +105,20 @@ class AuthService {
   Future<AppUser> _fetchCurrentUser() async {
     final response = await _api.client().get('/auth/me');
     final data = response.data as Map<String, dynamic>;
-    return AppUser(
+    final user = AppUser(
       id: data['user_id'] as String? ?? '',
       name: (data['name'] as String?)?.trim().isNotEmpty == true
           ? data['name'] as String
           : (data['email'] as String? ?? ''),
       email: data['email'] as String? ?? '',
     );
+
+    // O armazenamento local é escopado por usuário, então saber quem é
+    // precisa vir antes de qualquer tela ler histórico ou participantes.
+    await _api.setUserId(user.id);
+    await LocalScope.adoptLegacyData();
+
+    return user;
   }
 
   String _messageFor(DioException e, {required bool isLogin}) {

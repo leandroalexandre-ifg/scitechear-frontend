@@ -31,6 +31,7 @@ class ApiClient {
   static const _keyAccess = 'auth_access_token';
   static const _keyRefresh = 'auth_refresh_token';
   static const _keyExpiresAt = 'auth_expires_at';
+  static const _keyUserId = 'auth_user_id';
 
   /// Margem para renovar *antes* de expirar, em vez de esperar o 401. O
   /// access token dura 30 minutos no backend, e uma requisição pode demorar
@@ -45,6 +46,12 @@ class ApiClient {
   String? _accessToken;
   String? _refreshToken;
   DateTime? _expiresAt;
+  String? _userId;
+
+  /// De quem é esta sessão. Persistido junto dos tokens porque o
+  /// armazenamento local é escopado por usuário (ver `local_scope.dart`) e
+  /// precisa saber a resposta antes de `/auth/me` responder.
+  String? get userId => _userId;
 
   /// Renovação em andamento. Sem isto, várias chamadas simultâneas com o
   /// token vencido (o polling de status enquanto um upload roda) dispararia
@@ -115,8 +122,16 @@ class ApiClient {
     final prefs = await SharedPreferences.getInstance();
     _accessToken = prefs.getString(_keyAccess);
     _refreshToken = prefs.getString(_keyRefresh);
+    _userId = prefs.getString(_keyUserId);
     final raw = prefs.getString(_keyExpiresAt);
     _expiresAt = raw == null ? null : DateTime.tryParse(raw);
+  }
+
+  /// Registra de quem é a sessão, depois que `/auth/me` responde.
+  Future<void> setUserId(String userId) async {
+    _userId = userId;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyUserId, userId);
   }
 
   /// Guarda o par de tokens devolvido por `/auth/login` ou `/auth/refresh`.
@@ -134,14 +149,19 @@ class ApiClient {
     await _write(prefs, _keyExpiresAt, _expiresAt?.toIso8601String());
   }
 
+  /// Encerra a sessão. Não toca nos dados escopados do usuário (histórico,
+  /// participantes, cache): eles continuam no aparelho, isolados sob a chave
+  /// dele, e voltam quando ele entrar de novo.
   Future<void> clearSession() async {
     _accessToken = null;
     _refreshToken = null;
     _expiresAt = null;
+    _userId = null;
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_keyAccess);
     await prefs.remove(_keyRefresh);
     await prefs.remove(_keyExpiresAt);
+    await prefs.remove(_keyUserId);
   }
 
   /// Token de refresh atual — `/auth/logout` precisa mandá-lo no corpo para

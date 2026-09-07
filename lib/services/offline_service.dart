@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/meeting_result.dart';
+import 'local_scope.dart';
 
 /// Habilita o caminho de demonstração (resultado fabricado localmente quando
 /// o backend está indisponível). Flag de compilação — `--dart-define=
@@ -19,16 +20,20 @@ const bool kDemoModeEnabled = bool.fromEnvironment(
 /// backend está indisponível) quanto para permitir reabrir reuniões já
 /// processadas sem depender de uma nova chamada de rede.
 class LocalResultCache {
-  static const _prefix = 'result_';
+  // Escopada por usuário. É o cache mais sensível dos três: como ele abre
+  // resultados sem consultar o backend, uma chave global deixaria a
+  // transcrição de uma reunião legível por quem entrasse depois no aparelho,
+  // por fora do escopo que o servidor aplica.
+  static String _keyFor(String jobId) => LocalScope.key('result_$jobId');
 
   Future<void> save(String jobId, MeetingResult result) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('$_prefix$jobId', jsonEncode(result.toJson()));
+    await prefs.setString(_keyFor(jobId), jsonEncode(result.toJson()));
   }
 
   Future<MeetingResult?> load(String jobId) async {
     final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('$_prefix$jobId');
+    final raw = prefs.getString(_keyFor(jobId));
     if (raw == null) return null;
     return MeetingResult.fromJson(jsonDecode(raw) as Map<String, dynamic>);
   }
