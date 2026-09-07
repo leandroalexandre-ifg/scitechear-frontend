@@ -13,6 +13,14 @@ class UploadException implements Exception {
 }
 
 class UploadService {
+  /// Teto de 300 MB do backend (`MAX_UPLOAD_MB`). Sem uma mensagem própria,
+  /// isto viraria "falha de rede" — que manda o usuário tentar de novo para
+  /// falhar igual. Uma reunião de ~2h em WAV 16 kHz mono encosta no limite de
+  /// verdade (~230 MB), então não é um caso hipotético.
+  static const _tooLargeMessage =
+      'A gravação é longa demais para envio (limite de 300 MB). '
+      'Grave a reunião em partes menores.';
+
   final _dio = ApiClient.instance.client(
     connectTimeout: const Duration(seconds: 30),
     receiveTimeout: const Duration(minutes: 5),
@@ -68,6 +76,12 @@ class UploadService {
   }
 
   String _messageFor(DioException e) {
+    // Antes do `switch` por tipo: o backend aplica o teto de tamanho
+    // *durante* a escrita em disco, então o 413 pode chegar com o corpo ainda
+    // sendo enviado — e aí o dio pode classificar como erro de envio, não
+    // como `badResponse`. O código HTTP é o sinal confiável.
+    if (e.response?.statusCode == 413) return _tooLargeMessage;
+
     switch (e.type) {
       case DioExceptionType.connectionTimeout:
       case DioExceptionType.sendTimeout:

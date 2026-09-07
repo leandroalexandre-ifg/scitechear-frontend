@@ -3,6 +3,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../core/theme/app_colors.dart';
 import '../models/participant.dart';
+import '../services/job_errors.dart';
 import '../services/offline_service.dart';
 import '../services/status_service.dart';
 import '../widgets/glass_card.dart';
@@ -31,7 +32,15 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
   bool _failed = false;
   String _errorTitle = '';
   String _errorMessage = '';
+  String? _errorCode;
+  bool _canRetry = true;
 
+  // Os oito estados do backend em ordem, para a lista de etapas. O job **não**
+  // passa necessariamente por todos: o servidor empurra o estado atual a cada
+  // segundo, e estágios curtos (`identifying`, `summarizing`) costumam não
+  // aparecer nenhuma vez. Pular etapas é normal — quem estiver antes do
+  // estado atual é marcado como concluído, e nada aqui espera a sequência
+  // completa.
   static const _steps = [
     (key: 'queued',       label: 'Na fila',                    icon: Icons.hourglass_empty_rounded,    color: AppColors.textSecondary),
     (key: 'transcribing', label: 'Transcrevendo (Whisper)',     icon: Icons.text_fields_rounded,        color: AppColors.primary),
@@ -83,6 +92,18 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
         );
         return;
       }
+      if (status == 'removed') {
+        // O job não existe mais para este usuário. "Tentar novamente" aqui
+        // só produziria o mesmo 404, então o botão sai.
+        _navigated = true;
+        _showError(
+          title: 'Reunião removida',
+          message: 'Esta reunião não está mais no servidor. '
+              'Ela pode ter sido removida em outro aparelho.',
+          canRetry: false,
+        );
+        return;
+      }
       setState(() => _currentStatus = status);
       if (status == 'done') {
         _navigated = true;
@@ -110,12 +131,10 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
         _navigated = true;
         final detail = await _status.fetchStatusDetail(widget.jobId);
         final backendError = detail?['error'];
-        final backendMessage = backendError is Map
-            ? backendError['message']?.toString()
-            : null;
         _showError(
           title: 'Falha no processamento',
-          message: backendMessage ?? 'O processamento falhou no servidor.',
+          message: jobErrorMessage(backendError),
+          code: jobErrorCode(backendError),
         );
       }
     });
@@ -149,12 +168,19 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
     );
   }
 
-  void _showError({required String title, required String message}) {
+  void _showError({
+    required String title,
+    required String message,
+    String? code,
+    bool canRetry = true,
+  }) {
     if (!mounted) return;
     setState(() {
       _failed = true;
       _errorTitle = title;
       _errorMessage = message;
+      _errorCode = code;
+      _canRetry = canRetry;
     });
   }
 
@@ -162,6 +188,8 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
     setState(() {
       _failed = false;
       _navigated = false;
+      _errorCode = null;
+      _canRetry = true;
       _currentStatus = 'queued';
     });
     _listen();
@@ -244,16 +272,22 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
             height: 1.4,
           ),
         ),
+        if (_errorCode != null) ...[
+          const SizedBox(height: 10),
+          _buildErrorCode(_errorCode!),
+        ],
         const SizedBox(height: 32),
-        SizedBox(
-          width: double.infinity,
-          child: FilledButton.icon(
-            onPressed: _retry,
-            icon: const Icon(Icons.refresh_rounded, size: 18),
-            label: const Text('Tentar novamente'),
+        if (_canRetry) ...[
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _retry,
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Tentar novamente'),
+            ),
           ),
-        ),
-        const SizedBox(height: 12),
+          const SizedBox(height: 12),
+        ],
         SizedBox(
           width: double.infinity,
           child: OutlinedButton(
@@ -264,6 +298,21 @@ class _ProcessingScreenState extends State<ProcessingScreen> {
         const SizedBox(height: 12),
         _buildJobId(),
       ],
+    );
+  }
+
+  /// Código bruto da falha, para quem for procurar o job no log do servidor.
+  /// Fica pequeno e discreto: não é para o usuário interpretar, é para ele
+  /// conseguir repassar.
+  Widget _buildErrorCode(String code) {
+    return Center(
+      child: Text(
+        code,
+        style: GoogleFonts.robotoMono(
+          color: AppColors.textMuted,
+          fontSize: 11,
+        ),
+      ),
     );
   }
 
