@@ -34,6 +34,29 @@ contrato do backend). Diferente do backend, aqui não há uma camada de
 "repositório" formal — o estado local relevante (cache de resultados,
 sessão do usuário) é gerenciado dentro dos próprios serviços.
 
+### Os dois portões
+
+Sobre essas três camadas há uma quarta ideia, que é o que sustenta a
+integração com um backend autenticado e multiusuário: **dois portões, e
+nenhum caminho que os contorne.**
+
+![Sessão, escopo por usuário e integração](diagrams/07-app-session-architecture.svg)
+
+**`ApiClient` é o único que fala `Authorization`.** Nenhuma tela guarda
+token, nenhum serviço cria um `Dio` avulso. Uma segunda cópia do token
+dessincronizaria na primeira renovação, e o app passaria a alternar entre
+chamadas válidas e 401 conforme quem tivesse falado primeiro com o servidor.
+
+**`LocalScope` é o único que decide onde uma chave é gravada.** Toda chave
+de `shared_preferences` vira `u<user_id>:<nome>`. O backend escopa por
+`user_id`; o disco do aparelho precisa fazer o mesmo, senão quem entrar
+depois lê a transcrição de quem entrou antes — passando por baixo do escopo
+do servidor, já que o cache local abre resultados sem consultá-lo.
+
+As duas regras estão no README, na lista do que não fazer, porque violá-las
+não quebra nada imediatamente: quebra na segunda conta, ou na primeira
+renovação concorrente.
+
 ## 3. Fluxo de telas
 
 O aplicativo segue um fluxo linear, tela após tela, sem um framework de
@@ -314,24 +337,67 @@ separação por usuário. Não há caminho pela interface até eles (o cadastro
 que os referencia é escopado) e o diretório é privado ao app, mas o
 isolamento ali é mais fraco do que o das chaves.
 
-`AppUser.isAdmin` sobrou do login mock e hoje é sempre `false`: o
-`UserPublic` do backend não tem noção de papel. O campo e o selo de
-administrador na `HomeScreen` ficaram no lugar, inertes, à espera de o
-backend ganhar papéis — não são um recurso ativo.
+`AppUser` espelha o `UserPublic` do backend e não tem mais nada: `user_id`,
+`email` e `name`. Havia um `isAdmin` sobrando do login mock, sempre `false`,
+com um selo de administrador na `HomeScreen` que nunca aparecia. O backend
+confirmou em 07/09/2026 que não existe noção de papel em lugar nenhum do
+servidor, e que avisa antes se um dia houver — o campo e o selo foram
+removidos. Um campo inerte é pior do que campo nenhum: quem lê o modelo
+supõe que exista uma regra de autorização em algum lugar.
 
 ### 4.1. `participant_service.dart` — identidade e voz
 
-Gerencia os dados do participante localmente e sincroniza a amostra de voz
-com o backend através de `POST /participants/{id}/voice-samples`. Um
+Gerencia os dados do participante no aparelho, sincroniza a amostra de voz
+com o backend através de `POST /participants/{id}/voice-samples`, e trata o
+servidor como fonte da verdade sobre quais perfis de voz existem — ver
+"O `participant_id` e a reinstalação", mais abaixo nesta seção. Um
 ponto de design que merece destaque, porque já foi fonte de um bug real
 antes de ser corrigido: **a sincronização acontece uma única vez, no
 momento do cadastro ou da atualização da amostra — nunca a cada
 reunião.** Isso é garantido estruturalmente pelo próprio ponto de chamada:
 a função de sincronização só é invocada a partir da tela de cadastro de
-participantes, nunca do fluxo de upload de uma reunião. Ao remover um
-participante, o serviço tenta, de forma best-effort, solicitar a exclusão
-do perfil remoto também — mas a remoção local sempre acontece,
-independentemente de o backend estar acessível ou não nesse momento.
+participantes, nunca do fluxo de upload de uma reunião.
+
+#### O `participant_id` e a reinstalação
+
+O `participant_id` é **gerado pelo app** (`microsecondsSinceEpoch`, no
+cadastro) e o servidor guarda o perfil de voz em
+`storage/voices/<user_id>/<participant_id>/`. As três rotas de
+`/participants/{id}` exigem que o chamador já saiba o id — então **um id
+esquecido é um perfil de voz invisível e inapagável**: ninguém consegue
+listar para descobrir que existe, nem remover sem ele. É o dado mais
+sensível que o sistema guarda, e o que menos deveria sobrar por acidente.
+
+O cadastro local mora em `shared_preferences`, que não sobrevive a
+desinstalar o app nem a trocar de aparelho. Sem mais nada, cada reinstalação
+órfãria o conjunto inteiro de perfis daquela conta: o usuário recadastra as
+mesmas pessoas, recebe ids novos, e os antigos ficam para sempre.
+
+Duas defesas, e nenhuma é opcional:
+
+**`GET /participants` semeia o cadastro de volta.** A rota devolve `id` e
+`name` — o `display_name` que o app mandou junto da amostra. Com o nome
+junto, a listagem deixa de ser uma vassoura e vira recuperação:
+`seedFromServerIfEmpty()`, chamado pela `HomeScreen`, traz os participantes
+com a voz já pronta quando o cadastro local está vazio. O órfão não é limpo
+depois — ele não chega a existir.
+
+**Um id nunca é descartado sem confirmação.** A remoção local sempre
+acontece, com ou sem rede; mas quando o `DELETE .../voice-profile` falha, o
+id vai para `u<user_id>:pending_voice_profile_deletions` e é retomado na
+próxima abertura da tela. Antes, o id ia embora junto com o registro local e
+o perfil ficava órfão — o usuário via um aviso, sem nada que pudesse fazer.
+
+A ordem entre as duas importa e não é óbvia: a fila de exclusões é retomada
+**antes** da listagem, e ids ainda pendentes são filtrados dela. Na ordem
+inversa, quem apagasse um participante sem rede o veria voltar como cadastro
+na abertura seguinte — o servidor ainda tem o perfil, e a listagem o traria.
+
+Consequência na interface: um participante semeado tem perfil no servidor e
+**nenhum WAV neste aparelho**. A pergunta que a tela faz é
+`hasVoiceProfile` (`voiceProfileSynced || hasVoiceSample`), não
+`hasVoiceSample` — esta responderia "não" para todo mundo depois de
+reinstalar, mandando o usuário regravar voz que já está cadastrada.
 
 ### 4.2. `upload_service.dart` — enviando a reunião
 
@@ -353,18 +419,36 @@ texto genérico com o código HTTP.
 
 ### 4.3. `status_service.dart` — acompanhando o job
 
-Tenta primeiro um canal WebSocket para receber atualizações de status em
-tempo real; se ele falhar ou não estiver disponível, recorre
-automaticamente a consultas periódicas por polling (a cada poucos
-segundos). Um detalhe de comportamento vale registro porque corrigiu um
-bug real encontrado durante o desenvolvimento: **se o WebSocket fechar a
-conexão antes de o job chegar a um estado terminal (`done` ou `error`),
-isso é tratado exatamente como se fosse um erro de conexão — caindo no
-polling — em vez de simplesmente parar de escutar.** Sem esse tratamento,
-uma implementação de servidor que fecha a conexão WebSocket após enviar
-uma única atualização (um comportamento válido, ainda que minimalista)
-faria a tela de processamento travar indefinidamente na primeira
-atualização recebida.
+O WebSocket é o caminho **primário**; o polling de 3 segundos é o fallback.
+Desde a Fase 8 do backend (validada em 05/09/2026), o `/ws` empurra o estado
+atual **a cada segundo** até `done`/`error`, ou até o teto de 1 hora por
+conexão. O cliente lê **em laço** — encerrar depois da primeira mensagem
+descartaria o push e cairia no polling sem necessidade.
+
+Duas propriedades que quem consome este stream precisa respeitar:
+
+**O job não passa necessariamente pelos oito estados.** O servidor empurra o
+estado atual a cada segundo, não a sequência de transições: estágios curtos
+somem no intervalo. No E2E real, `identifying` levou 0,07s e `summarizing`
+0,00s (desligado por flag) — nenhum dos dois apareceu uma única vez.
+`queued → transcribing → diarizing → extracting → done` é normal e
+frequente, e nenhuma tela pode tratar um estado pulado como anomalia. O
+histórico completo fica em `job_status_events`, no banco do servidor.
+
+**Fechar não é terminar.** Se o WebSocket fechar antes de o job chegar a
+`done` ou `error`, isso é tratado como "preciso continuar de outro jeito" —
+caindo no polling — e nunca como "o job acabou". Sem isso, o teto de 1h da
+conexão travaria a tela de processamento em qualquer reunião longa.
+
+O `progress` de `/status` existe no schema e é **sempre `null`**: nenhum
+ponto do backend o escreve. A granularidade real é o estágio, e não há barra
+de progresso nem percentual construídos sobre ele.
+
+Além dos oito estados do backend, o stream emite dois sinais **inventados
+pelo cliente**, que o servidor nunca envia: `offline` (o polling esgotou as
+tentativas) e `removed` (o servidor respondeu 404 — o job não existe mais
+para este usuário). O `removed` é terminal na primeira resposta e a tela de
+erro esconde o botão "Tentar novamente", que só produziria o mesmo 404.
 
 O token vai na query string (`/ws/{job_id}?token=...`), não em header: o
 handshake de WebSocket não aceita `Authorization` em todo cliente, e é
@@ -372,6 +456,20 @@ assim que o backend o lê — sem token ele fecha com 4401, e com 4404 se o
 job for de outro usuário. Sem sessão, nem se tenta conectar: cai direto no
 polling, que produz uma mensagem de erro melhor do que um WebSocket
 fechando sem explicação.
+
+**O código de fechamento não é lido, de propósito.** Quem classifica é a
+resposta HTTP do polling que vem em seguida: no 4401 o interceptor do
+`ApiClient` renova o token e refaz a chamada; no 4404 o 404 vira "reunião
+removida". Ler o close code aqui duplicaria as duas decisões num segundo
+lugar, com menos informação do que a resposta HTTP carrega.
+
+Isso tem um custo que vale conhecer: o app não distingue "não consegui abrir
+o WebSocket" de "abri e fui recusado" — os dois caminhos terminam no
+polling. Quando o backend descobriu que o `4401` nunca chegava a cliente
+nenhum (o handler fechava antes do `accept()`, e o servidor ASGI recusava o
+handshake com HTTP 403), o app não tinha como ter reportado: o fallback que
+protege a tela também esconde esse defeito. O motivo do fechamento fica no
+journal do servidor.
 
 ### 4.4. `audio_service.dart` e `background_service.dart` — a captação
 
@@ -531,6 +629,55 @@ comportamento de fallback de rede (WebSocket falhando e caindo em
 polling), em vez de depender de um backend real rodando durante a suíte
 de testes.
 
+### O que os testes provam, e o que não
+
+São **43 testes**, todos com um adaptador HTTP falso. O que está provado é a
+lógica: sessão (renovação proativa, uma renovação por vez, não deslogar em
+falha de rede), escopo local entre contas, tradução dos sete códigos de erro
+de job, a fila de exclusões de perfil de voz, e a semeadura do cadastro pelo
+`GET /participants`.
+
+O que um adaptador falso não pode provar é a conversa real — e é por isso
+que a validação ponta a ponta contra o backend implantado (seção abaixo)
+não é redundante com a suíte.
+
+### Validação ponta a ponta
+
+**07/09/2026 — primeira vez que o app falou com o servidor.** Contra a API
+implantada no NumbERS, com o worker rodando, por túnel SSH sobre VPN
+encadeado ao `adb reverse`:
+
+| Verificado | Resultado |
+|---|---|
+| Cadastro e login de duas contas `@ifg.edu.br`, pelo app | ✅ |
+| Participante cadastrado com amostra de voz enviada | ✅ |
+| Upload, processamento até `done` e tela de resultado | ✅ (reunião de 40 s) |
+
+**Ainda não exercitado:** o isolamento entre as duas contas (sair de uma,
+entrar na outra e conferir que histórico e participantes aparecem vazios),
+reunião longa (>10 min), a detecção de truncamento do gravador, e a
+semeadura do cadastro após reinstalar. Nenhum deles falhou — nenhum deles
+chegou a ser tentado.
+
+### Contra o backend implantado
+
+O app **não muda**: continua apontando para `127.0.0.1:8000`. O que muda é o
+que existe do outro lado dessa porta.
+
+```
+aparelho  --adb reverse (USB)-->  máquina de dev  --ssh -L (VPN)-->  NumbERS
+  :8000                               :8000                          :18080
+```
+
+O caminho é HTTP puro e isso não é descuido: aparelho→máquina é USB,
+máquina→servidor é o próprio SSH, e o HTTP só existe em loopback dentro de
+cada máquina. O proxy TLS interno ficou de fora porque o `dart:io` usa o
+armazenamento de CAs do **sistema**, não o do usuário — instalar a CA no
+aparelho não faz o app confiar nela, e usá-la exigiria embuti-la na build.
+
+O roteiro completo, com o que observar em cada passo, está em
+[`TESTE_CONJUNTO.md`](TESTE_CONJUNTO.md).
+
 Testar em dispositivo físico é o caminho recomendado (evita problemas de
 captura de áudio específicos do emulador) — o passo a passo completo está
 no README, em ["Rodando em dispositivo
@@ -546,5 +693,20 @@ cada desconexão.
 
 Android é a plataforma testada e validada nesta versão — o código
 preserva compatibilidade com iOS, mas isso não é critério de aceite da V1.
-A autenticação é simplificada (seção 3.1); um serviço de autenticação real
-é um passo necessário antes de qualquer uso além de testes internos.
+
+A autenticação **deixou de ser simplificada**: é JWT real contra o `/auth` do
+backend, com refresh rotacionado, renovação proativa e escopo por usuário no
+armazenamento local (seções 4.0 e 4.0.1). O que era "um passo necessário
+antes de qualquer uso além de testes internos" foi dado.
+
+O que continua fora da V1:
+
+- **Histórico vindo do servidor.** `GET /meetings`, `PATCH` e `DELETE` já
+  existem no backend, com os campos que faltavam (`participants` com
+  `{id, name}`, `error`). A migração está destravada e acordada, mas fica
+  para depois da validação ponta a ponta — um bug de cada vez.
+- **HTTPS ponta a ponta.** O caminho validado é loopback através de túnel
+  (ver seção 9). O app nunca falou TLS com o servidor, e o `dart:io` não
+  herda a CA instalada no aparelho: usar o proxy TLS interno exigiria
+  embutir a CA na build.
+- **iOS**, que compila mas não é exercitado.

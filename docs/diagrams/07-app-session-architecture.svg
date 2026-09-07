@@ -1,0 +1,143 @@
+<svg width="960" height="700" viewBox="0 0 960 700" xmlns="http://www.w3.org/2000/svg" font-family="Arial, Helvetica, sans-serif">
+<defs>
+<marker id="arrow7" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+<path d="M2 1L8 5L2 9" fill="none" stroke="#5F5E5A" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+</marker>
+</defs>
+<rect width="960" height="700" fill="#FFFFFF"/>
+
+<text x="30" y="30" font-size="18" font-weight="bold" fill="#111827">SciTech Ear — Arquitetura do app: sessão, escopo por usuário e integração</text>
+<text x="30" y="50" font-size="11.5" fill="#6B7280">Dois portões, e nenhum caminho que os contorne: toda saída de rede passa pelo ApiClient; toda gravação no aparelho passa pelo LocalScope.</text>
+
+<!-- ============ Telas ============ -->
+<rect x="30" y="66" width="900" height="96" rx="12" fill="#E6F1FB" stroke="#185FA5" stroke-width="1"/>
+<text x="48" y="88" font-size="13.5" font-weight="bold" fill="#042C53">lib/screens — nenhuma tela guarda token nem escreve chave própria no disco</text>
+
+<g font-size="11.5" text-anchor="middle">
+<rect x="48" y="100" width="116" height="46" rx="8" fill="#FFFFFF" stroke="#185FA5"/>
+<text x="106" y="119" font-weight="bold" fill="#042C53">Auth</text>
+<text x="106" y="134" font-size="9" fill="#0C447C">login · cadastro</text>
+
+<rect x="172" y="100" width="116" height="46" rx="8" fill="#FFFFFF" stroke="#185FA5"/>
+<text x="230" y="119" font-weight="bold" fill="#042C53">Home</text>
+<text x="230" y="134" font-size="9" fill="#0C447C">histórico · reabrir</text>
+
+<rect x="296" y="100" width="116" height="46" rx="8" fill="#FFFFFF" stroke="#185FA5"/>
+<text x="354" y="119" font-weight="bold" fill="#042C53">Participants</text>
+<text x="354" y="134" font-size="9" fill="#0C447C">cadastro de voz</text>
+
+<rect x="420" y="100" width="116" height="46" rx="8" fill="#FFFFFF" stroke="#185FA5"/>
+<text x="478" y="119" font-weight="bold" fill="#042C53">MeetingSetup</text>
+<text x="478" y="134" font-size="9" fill="#0C447C">título · seleção</text>
+
+<rect x="544" y="100" width="116" height="46" rx="8" fill="#FFFFFF" stroke="#185FA5"/>
+<text x="602" y="119" font-weight="bold" fill="#042C53">Recording</text>
+<text x="602" y="134" font-size="9" fill="#0C447C">grava · envia</text>
+
+<rect x="668" y="100" width="116" height="46" rx="8" fill="#FFFFFF" stroke="#185FA5"/>
+<text x="726" y="119" font-weight="bold" fill="#042C53">Processing</text>
+<text x="726" y="134" font-size="9" fill="#0C447C">estágios · erro</text>
+
+<rect x="792" y="100" width="116" height="46" rx="8" fill="#FFFFFF" stroke="#185FA5"/>
+<text x="850" y="119" font-weight="bold" fill="#042C53">Result</text>
+<text x="850" y="134" font-size="9" fill="#0C447C">transcrição</text>
+</g>
+
+<line x1="290" y1="162" x2="290" y2="180" stroke="#5F5E5A" stroke-width="1.4" marker-end="url(#arrow7)"/>
+<line x1="670" y1="162" x2="670" y2="180" stroke="#5F5E5A" stroke-width="1.4" marker-end="url(#arrow7)"/>
+
+<!-- ============ Serviços ============ -->
+<rect x="30" y="182" width="900" height="140" rx="12" fill="#EAF3DE" stroke="#3B6D11" stroke-width="1"/>
+<text x="48" y="204" font-size="13.5" font-weight="bold" fill="#173404">lib/services — regra de negócio, sem estado de sessão próprio</text>
+
+<g font-size="11" text-anchor="middle">
+<rect x="54" y="216" width="200" height="44" rx="8" fill="#FFFFFF" stroke="#3B6D11"/>
+<text x="154" y="234" font-weight="bold" fill="#173404">auth_service</text>
+<text x="154" y="249" font-size="9" fill="#3B6D11">/auth/* · erros por campo</text>
+
+<rect x="270" y="216" width="200" height="44" rx="8" fill="#FFFFFF" stroke="#3B6D11"/>
+<text x="370" y="234" font-weight="bold" fill="#173404">upload_service</text>
+<text x="370" y="249" font-size="9" fill="#3B6D11">multipart · 413 = áudio longo</text>
+
+<rect x="486" y="216" width="200" height="44" rx="8" fill="#FFFFFF" stroke="#3B6D11"/>
+<text x="586" y="234" font-weight="bold" fill="#173404">status_service</text>
+<text x="586" y="249" font-size="9" fill="#3B6D11">WS em laço + polling 3s</text>
+
+<rect x="702" y="216" width="200" height="44" rx="8" fill="#FFFFFF" stroke="#3B6D11"/>
+<text x="802" y="234" font-weight="bold" fill="#173404">participant_service</text>
+<text x="802" y="249" font-size="9" fill="#3B6D11">GET /participants · fila de exclusão</text>
+
+<rect x="54" y="268" width="200" height="44" rx="8" fill="#FFFFFF" stroke="#3B6D11"/>
+<text x="154" y="286" font-weight="bold" fill="#173404">meeting_service</text>
+<text x="154" y="301" font-size="9" fill="#3B6D11">histórico local</text>
+
+<rect x="270" y="268" width="200" height="44" rx="8" fill="#FFFFFF" stroke="#3B6D11"/>
+<text x="370" y="286" font-weight="bold" fill="#173404">offline_service</text>
+<text x="370" y="301" font-size="9" fill="#3B6D11">cache de resultado · modo demo</text>
+
+<rect x="486" y="268" width="200" height="44" rx="8" fill="#FFFFFF" stroke="#3B6D11"/>
+<text x="586" y="286" font-weight="bold" fill="#173404">audio_service</text>
+<text x="586" y="301" font-size="9" fill="#3B6D11">WAV 16 kHz · truncamento</text>
+
+<rect x="702" y="268" width="200" height="44" rx="8" fill="#FFFFFF" stroke="#3B6D11"/>
+<text x="802" y="286" font-weight="bold" fill="#173404">job_errors</text>
+<text x="802" y="301" font-size="9" fill="#3B6D11">7 códigos → português</text>
+</g>
+
+<line x1="290" y1="322" x2="290" y2="350" stroke="#5F5E5A" stroke-width="1.4" marker-end="url(#arrow7)"/>
+<text x="298" y="341" font-size="9.5" fill="#444441">rede</text>
+<line x1="755" y1="322" x2="755" y2="350" stroke="#5F5E5A" stroke-width="1.4" marker-end="url(#arrow7)"/>
+<text x="763" y="341" font-size="9.5" fill="#444441">disco</text>
+
+<!-- ============ Portão 1: ApiClient ============ -->
+<rect x="30" y="352" width="520" height="170" rx="12" fill="#E1F5EE" stroke="#0F6E56" stroke-width="1.6"/>
+<text x="48" y="376" font-size="13.5" font-weight="bold" fill="#04342C">ApiClient — dono do par de tokens (singleton)</text>
+<g font-size="10.5" fill="#04342C">
+<text x="48" y="398">• Único ponto que escreve <tspan font-weight="bold">Authorization: Bearer</tspan>. Nenhum Dio avulso.</text>
+<text x="48" y="418">• Renova <tspan font-weight="bold">2 min antes</tspan> de vencer, não no 401 — um upload multipart</text>
+<text x="60" y="433">  já teve o corpo consumido e não dá para reenviar de graça.</text>
+<text x="48" y="453">• <tspan font-weight="bold">Uma renovação por vez.</tspan> O backend revoga o refresh no uso;</text>
+<text x="60" y="468">  N chamadas paralelas fariam N−1 falharem.</text>
+<text x="48" y="488">• Falha de rede <tspan font-weight="bold">não desloga</tspan>. Só 401 no próprio refresh encerra.</text>
+<text x="48" y="508">• <tspan font-weight="bold">onSessionExpired</tspan> → main.dart volta ao login, num lugar só.</text>
+</g>
+
+<!-- ============ Portão 2: LocalScope ============ -->
+<rect x="580" y="352" width="350" height="170" rx="12" fill="#FAECE7" stroke="#993C1D" stroke-width="1.6"/>
+<text x="598" y="376" font-size="13.5" font-weight="bold" fill="#4A1B0C">LocalScope — escopo por usuário</text>
+<g font-size="10.5" fill="#4A1B0C">
+<text x="598" y="398">• Toda chave vira <tspan font-weight="bold">u&lt;user_id&gt;:&lt;nome&gt;</tspan>.</text>
+<text x="598" y="418">• O backend escopa por user_id; o disco</text>
+<text x="610" y="433">  do aparelho precisa fazer o mesmo.</text>
+<text x="598" y="453">• Sem isso, quem entrasse depois leria a</text>
+<text x="610" y="468">  transcrição de quem entrou antes.</text>
+<text x="598" y="488">• Sessão anônima tem escopo próprio,</text>
+<text x="610" y="503">  isolado de qualquer conta real.</text>
+</g>
+
+<line x1="290" y1="522" x2="290" y2="550" stroke="#5F5E5A" stroke-width="1.4" marker-end="url(#arrow7)"/>
+<line x1="755" y1="522" x2="755" y2="550" stroke="#5F5E5A" stroke-width="1.4" marker-end="url(#arrow7)"/>
+
+<!-- ============ Backend ============ -->
+<rect x="30" y="552" width="520" height="126" rx="12" fill="#E6F1FB" stroke="#185FA5" stroke-width="1.6"/>
+<text x="48" y="576" font-size="13.5" font-weight="bold" fill="#042C53">Backend SciTech Ear — API (FastAPI) + worker dedicado</text>
+<g font-size="10.5" fill="#0C447C">
+<text x="48" y="598"><tspan font-weight="bold">HTTP</tspan>  /auth/* · /upload · /status · /resultado · /meetings · /participants</text>
+<text x="48" y="618"><tspan font-weight="bold">WS</tspan>    /ws/{job_id}?token=  — empurra o estado a cada 1s até done/error</text>
+<text x="48" y="638">O polling de 3s <tspan font-weight="bold">não sai</tspan>: cobre o teto de 1h da conexão, queda de rede,</text>
+<text x="48" y="653">4401 e 4404. Quem classifica é a resposta HTTP, não o código de fechamento.</text>
+<text x="48" y="671" fill="#6B7280">O worker é processo separado: sem ele, todo job fica em queued para sempre.</text>
+</g>
+
+<!-- ============ shared_preferences ============ -->
+<rect x="580" y="552" width="350" height="126" rx="12" fill="#F1EFE8" stroke="#9CA3AF" stroke-width="1.6"/>
+<text x="598" y="576" font-size="13.5" font-weight="bold" fill="#374151">shared_preferences (aparelho)</text>
+<g font-size="10" fill="#444441" font-family="Menlo, Consolas, monospace">
+<text x="598" y="598">u&lt;id&gt;:meeting_history</text>
+<text x="598" y="616">u&lt;id&gt;:registered_participants</text>
+<text x="598" y="634">u&lt;id&gt;:pending_voice_profile_deletions</text>
+<text x="598" y="652">u&lt;id&gt;:result_&lt;job_id&gt;</text>
+</g>
+<text x="598" y="671" font-size="10" fill="#6B7280">auth_* (tokens) ficam fora do escopo, por definição.</text>
+
+</svg>

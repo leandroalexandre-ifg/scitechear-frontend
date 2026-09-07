@@ -5,9 +5,16 @@ App Flutter (cliente fino) para gravar reuniões, enviá-las a um backend de IA 
 Todo o processamento pesado (transcrição, diarização, extração de perguntas) roda no backend — o app apenas grava, envia e exibe o resultado. Quando o backend não responde, o app mostra o erro real: nunca fabrica um resultado para disfarçar a falha. Existe um modo de demonstração com dados fictícios, mas ele só liga por compilação explícita (`--dart-define=SCITECH_DEMO_MODE=true`).
 
 O app autentica de verdade contra o backend (`/auth/*`, JWT com refresh
-token). Ver [Estado da integração](#estado-da-integração).
+token) e, em **07/09/2026**, rodou pela primeira vez ponta a ponta contra a
+API implantada: cadastro, login, upload, WebSocket e resultado. Ver
+[Estado da integração](#estado-da-integração).
 
-> Para o documento completo de arquitetura (diagrama do sistema, camadas, contrato com o backend e recomendações), veja [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md).
+> **Documentação:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (o sistema
+> inteiro) · [`docs/FRONTEND_ARCHITECTURE.md`](docs/FRONTEND_ARCHITECTURE.md)
+> (este app, tela a tela e serviço a serviço) ·
+> [`docs/TESTE_CONJUNTO.md`](docs/TESTE_CONJUNTO.md) (como rodar contra o
+> backend implantado) · [`docs/integracao/`](docs/integracao/) (como o
+> contrato com o backend foi decidido).
 
 ## Arquitetura
 
@@ -273,6 +280,16 @@ arquivo do servidor dentro.
 | Dados no aparelho | escopados por `user_id` | chaves escopadas (`local_scope.dart`) | ✅ em dia |
 | Papel de administrador | não existe, e não há plano de existir | removido do app | ✅ resolvido |
 
+**Validado ponta a ponta em 07/09/2026**, contra a API implantada com o
+worker rodando: cadastro e login de duas contas pelo app, participante com
+amostra de voz, e uma reunião de 40 segundos subindo, processando até `done`
+e abrindo na tela de resultado.
+
+Ainda **não** exercitado, e por isso ainda não pode ser chamado de pronto: o
+isolamento entre as duas contas (passos 6–7 do roteiro), reunião longa
+(>10 min), a detecção de truncamento do gravador e a semeadura do cadastro
+depois de reinstalar. Nenhum falhou — nenhum chegou a ser tentado.
+
 ### Como a sessão funciona
 
 `api_client.dart` é o dono do par de tokens e o único ponto que fala
@@ -332,14 +349,24 @@ flutter test
 
 ## Documentação de arquitetura
 
-Documentação completa da arquitetura, com diagramas, em [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (visão geral do sistema) e [`docs/FRONTEND_ARCHITECTURE.md`](docs/FRONTEND_ARCHITECTURE.md) (telas, serviços e modelos deste repositório).
+Duas ideias sustentam a integração com um backend autenticado e
+multiusuário: **toda saída de rede passa pelo `ApiClient`** (o único que
+escreve `Authorization`) e **toda gravação no aparelho passa pelo
+`LocalScope`** (que escopa cada chave por `user_id`). Nenhum caminho os
+contorna, e as duas regras estão na lista do que não fazer, acima.
+
+![Sessão, escopo por usuário e integração](docs/diagrams/07-app-session-architecture.svg)
+
+O fluxo de telas e serviços, em mais detalhe:
 
 ![Fluxo de telas e serviços do frontend](docs/diagrams/05-frontend-architecture.svg)
 
 | Documento | Conteúdo |
 |---|---|
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Contexto geral, máquina de estados do job, sequência ponta a ponta, contrato de dados |
-| [`docs/FRONTEND_ARCHITECTURE.md`](docs/FRONTEND_ARCHITECTURE.md) | Telas, serviços, modelos, configuração via `--dart-define` |
+| [`docs/FRONTEND_ARCHITECTURE.md`](docs/FRONTEND_ARCHITECTURE.md) | Telas, serviços, modelos, sessão e escopo, validação ponta a ponta |
+| [`docs/TESTE_CONJUNTO.md`](docs/TESTE_CONJUNTO.md) | Rodar o app contra o backend implantado: túnel, roteiro, o que observar |
+| [`docs/integracao/`](docs/integracao/) | A correspondência com o backend — onde o contrato foi decidido |
 
 ## Rodando em dispositivo físico (Android)
 

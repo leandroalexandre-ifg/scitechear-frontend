@@ -156,9 +156,12 @@ Detalhando um pouco mais o que acontece tecnicamente em cada passo:
 4. O orquestrador do pipeline (`pipeline_facade.py`) chama, em sequência
    estrita, cada um dos serviços responsáveis por uma etapa, atualizando o
    estado do job no repositório de jobs a cada transição.
-5. Enquanto isso, o app consulta `GET /status/{job_id}` periodicamente (ou
-   recebe atualizações por WebSocket, quando disponível) para saber em que
-   ponto o processamento está.
+5. Enquanto isso, o app acompanha o estado pelo WebSocket
+   `/ws/{job_id}?token=`, que empurra o estado atual a cada segundo até
+   `done`/`error` — com `GET /status/{job_id}` a cada 3 s como plano B
+   obrigatório, para o caso de a conexão cair, bater o teto de 1 h ou ser
+   recusada. O WebSocket é o caminho primário; o polling é a rede de
+   segurança, e não sai.
 6. Quando o status chega a `done`, o app faz uma última chamada,
    `GET /resultado/{job_id}`, e recebe o objeto completo com a transcrição
    e as perguntas.
@@ -216,6 +219,42 @@ formato.
 ## 9. Contrato de dados canônico
 
 ![Contrato de dados canônico](diagrams/06-data-contract.svg)
+
+### 9.1. A superfície de rotas
+
+Todas exigem `Authorization: Bearer <access_token>`, exceto `/auth/register`,
+`/auth/login`, `/auth/refresh` e `/health`.
+
+| Rota | Papel |
+|---|---|
+| `POST /auth/register` | Cria a conta. **403** se o domínio do e-mail está fora da allowlist institucional do servidor — condição permanente do endereço, e conta como falha no rate limit por IP |
+| `POST /auth/login` | `{access_token, refresh_token, token_type, expires_in}` |
+| `POST /auth/refresh` | Mesmo par. O refresh apresentado é **revogado no uso**, sem janela de graça |
+| `POST /auth/logout` | 204. Revoga só aquele refresh token — sair num aparelho não derruba os outros |
+| `GET /auth/me` | `{user_id, email, name}`. O `user_id` é imutável |
+| `POST /upload` | Multipart: áudio, `title?`, `participants` (JSON único com `{id, name}`), `expected_speaker_count?` → 202 `{job_id, status}`. **413** acima de 300 MB |
+| `GET /status/{job_id}` | `{job_id, status, progress?, error?{code,message}, updated_at}`. **404** para job inexistente **ou de outro usuário** — não distingue, de propósito |
+| `GET /resultado/{job_id}` | O objeto abaixo. **409** enquanto o status não for `done` |
+| `WS /ws/{job_id}?token=` | Empurra o estado a cada 1 s até `done`/`error`; teto de 1 h por conexão. Fecha com **4401** (token ausente ou inválido) e **4404** (job inexistente ou de outro dono) |
+| `GET /meetings` | Lista do usuário, `created_at DESC`, com `limit` (padrão 50, máx. 200) e `offset` |
+| `GET /participants` | Os participantes da conta: `{participant_id, name, sample_count, …}`. `name` pode ser nulo |
+| `POST /participants/{id}/voice-samples` | Multipart. **413** acima de 25 MB |
+| `DELETE /participants/{id}/voice-profile` | **204 sempre**, inclusive para perfil inexistente — idempotente por desenho, como o logout |
+
+Três detalhes que já causaram bug e não são dedutíveis do schema:
+
+- **`progress` é sempre `null`.** O campo existe e nenhum ponto do backend o
+  escreve. A granularidade real é o estágio.
+- **O erro do FastAPI vem em `detail`**, não em `message`. Ler o campo errado
+  fazia todo erro do servidor virar um texto genérico com o código HTTP.
+- **`error.code` é um conjunto fechado de sete**: `AUDIO_NAO_ENCONTRADO`,
+  `TRANSCRIPTION_ERROR`, `DIARIZATION_ERROR`, `IDENTIFICATION_ERROR`,
+  `SUMMARIZATION_ERROR`, `EXTRACTION_ERROR` e
+  `WORKER_MAX_TENTATIVAS_EXCEDIDO` (o job órfão: o worker morreu, o job foi
+  reenfileirado 3 vezes e o backend desistiu). O `error.message` é o
+  `str(exc)` da exceção Python — não é texto para usuário final.
+
+### 9.2. O resultado
 
 O resultado de uma reunião processada com sucesso tem sempre esta forma:
 
@@ -322,16 +361,22 @@ app (não em runtime, para evitar ficar "esquecido ligado").
   de configuração simples de corrigir — o número de falantes já era
   identificado corretamente; o erro está em qual voz cada trecho
   realmente representa. Recomendação prática, até haver mais dados:
-  manter o dispositivo de gravação próximo aos falantes. Detalhes da
-  investigação em `docs/BACKEND_ARCHITECTURE.md` e `docs/PENDENCIAS.md`.
+  manter o dispositivo de gravação próximo aos falantes. Os detalhes da
+  investigação estão em `docs/BACKEND_ARCHITECTURE.md` e
+  `docs/PENDENCIAS.md`, **no repositório do backend** — este documento é
+  espelhado nos dois repositórios, e esses dois arquivos existem só lá.
 
 ## 12. Documentos relacionados
 
-- [`docs/BACKEND_ARCHITECTURE.md`](./BACKEND_ARCHITECTURE.md) — detalhamento
-  completo do backend: cada serviço, cada camada, o legado, os prompts.
+- `docs/BACKEND_ARCHITECTURE.md` — detalhamento completo do backend: cada
+  serviço, cada camada, o legado, os prompts. **Existe no repositório do
+  backend**, não neste.
 - [`docs/FRONTEND_ARCHITECTURE.md`](./FRONTEND_ARCHITECTURE.md) —
   detalhamento completo do app: cada tela, cada serviço, os modelos de
   dados.
+- [`docs/integracao/`](./integracao/) — a correspondência entre os dois
+  repositórios em 07/09/2026, onde as decisões de contrato abaixo foram
+  tomadas. Registro histórico, não referência.
 - `SciTech_Ear_Especificacao_Final_Implementacao.docx` — a
   especificação de implementação original, usada como fonte de verdade
   durante o desenvolvimento da V1. Este documento de arquitetura é a
