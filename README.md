@@ -117,9 +117,11 @@ Rotas efetivamente expostas pelo backend. **Todas exigem
 
 ```
 POST /auth/register          → 201 { id, name, email, ... }
+                               403 se o domínio do e-mail não está na
+                               allowlist institucional do servidor
 POST /auth/login             → { access_token, refresh_token }
 POST /auth/refresh           → { access_token, refresh_token }
-POST /auth/logout            → 204
+POST /auth/logout            → 204  (revoga só aquele refresh token)
 GET  /auth/me                → { id, name, email, ... }
 
 POST /upload
@@ -127,20 +129,25 @@ POST /upload
   Body: file=<wav 16kHz mono>, title?, participants=<json>, expected_speaker_count?
         participants: [{"id": "p1", "name": "José"}, ...]  (campo JSON único)
   Resposta: 202 { "job_id": "uuid", "status": "queued" }
+  413 acima de 300 MB (MAX_UPLOAD_MB). O teto é aplicado durante a escrita
+  em disco, então o 413 pode chegar com o corpo ainda subindo.
 
 GET /meetings?limit=&offset= → [{ job_id, title, status, created_at, updated_at }]
                                (exposto pelo backend; o app ainda usa histórico local)
 
 GET /status/{job_id}          (polling)
   Resposta: { job_id, status, progress?, error?: {code, message}, updated_at }
+  `progress` é SEMPRE null — o backend nunca o escreve. Não construir barra
+  de progresso nem percentual em cima dele.
 
 WS  /ws/{job_id}?token=<access_token>
   Autenticação por query param — o handshake de WS não aceita header
   Authorization em todo cliente. Fecha com 4401 sem token, 4404 se o job
   não for do usuário.
-  ATENÇÃO: ainda é um stub — manda o status atual UMA vez e fecha. O push
-  real de progresso é Fase 8 do backend, então o fallback de polling
-  continua obrigatório (ver o comentário em status_service.dart).
+  Empurra o estado atual a cada segundo até done/error, com teto de 1h por
+  conexão. O cliente lê EM LAÇO — encerrar depois da primeira mensagem
+  descartaria o push. O fallback de polling continua obrigatório: removê-lo
+  é decisão combinada com o backend (ver o comentário em status_service.dart).
 
 GET /resultado/{job_id}       (409 enquanto o status não for "done")
   Resposta: {
@@ -155,14 +162,81 @@ GET /resultado/{job_id}       (409 enquanto o status não for "done")
   }
 
 POST   /participants/{participant_id}/voice-samples   (multipart: file, name?)
+       413 acima de 25 MB (MAX_VOICE_SAMPLE_MB)
 GET    /participants/{participant_id}/voice-profile
+       → { participant_id, exists, sample_count, model_version, updated_at }
 DELETE /participants/{participant_id}/voice-profile   → 204
 ```
 
 Estados do job: `queued`, `transcribing`, `diarizing`, `identifying`,
-`summarizing`, `extracting`, `done`, `error`. O app também emite um
-`offline` **inventado pelo cliente** quando o polling esgota as tentativas —
-o backend nunca envia esse valor.
+`summarizing`, `extracting`, `done`, `error`. O app emite mais dois valores
+**inventados pelo cliente**, que o backend nunca envia: `offline` (o polling
+esgotou as tentativas) e `removed` (o servidor respondeu 404 — o job não
+existe mais para este usuário; terminal, e sem botão de tentar de novo).
+
+**O job não passa necessariamente por todos os oito.** O servidor empurra o
+estado *atual* a cada segundo, não a sequência de transições; estágios curtos
+(`identifying`, `summarizing`) costumam não aparecer nenhuma vez.
+`queued → transcribing → diarizing → extracting → done` é normal e frequente.
+Nenhuma tela pode tratar um estado pulado como anomalia.
+
+### `participant_id` é gerado pelo app, e não é estável
+
+O id sai de `DateTime.now().microsecondsSinceEpoch` no cadastro do
+participante e mora só em `u<user_id>:registered_participants`, no
+`shared_preferences`. **Não sobrevive a reinstalar o app nem a trocar de
+aparelho**, e o backend não tem rota que liste participantes — as três rotas
+de `/participants` exigem que o chamador já saiba o id.
+
+Um perfil de voz cujo id o app esqueceu fica invisível e inapagável no
+servidor. Por isso:
+
+- Quando o `DELETE .../voice-profile` falha, o id **não** é descartado junto
+  com o registro local: vai para `u<user_id>:pending_voice_profile_deletions`
+  e é retomado quando a tela de participantes abre com conexão.
+- Não gere `participant_id` em nenhum outro lugar do app, e não descarte um id
+  sem ter confirmação de que o perfil remoto não existe mais.
+
+A estabilidade entre instalações depende de uma rota de listagem por usuário,
+pendente no backend (ver `RESPOSTA_PARTICIPANT_IDS_2026-09-07.md`).
+
+### Cadastro restrito a e-mails institucionais
+
+O backend mantém uma allowlist de domínios (`AUTH_ALLOWED_EMAIL_DOMAINS`,
+hoje `ifg.edu.br`) e recusa `POST /auth/register` fora dela com **403**. O app
+mostra o `detail` do servidor ancorado no campo do e-mail — é condição
+permanente do endereço, não algo que melhora tentando de novo.
+
+**O 403 conta como tentativa falha no rate limit**, de propósito (senão daria
+para varrer domínios). Errar o domínio 10 vezes trava o cadastro por 1 hora —
+e com `adb reverse` o aparelho inteiro é `127.0.0.1`, um balde só para todas
+as contas do teste.
+
+### Rate limiting
+
+|  | Escopo | Limite | Janela | `Retry-After` |
+|---|---|---|---|---|
+| `/auth/login` | por **e-mail** | 5 falhas | 15 min | `900` |
+| `/auth/register` | por **IP** | 10 falhas | 60 min | `3600` |
+
+Só falhas contam; um login bem-sucedido limpa o contador daquele e-mail. Uma
+tentativa já bloqueada não estende a janela.
+
+O `Retry-After` é **a janela inteira, não o tempo restante** — pode dizer 3600
+faltando um minuto. Por isso a mensagem do app é "aguarde até X minutos", um
+limite superior, e não uma previsão.
+
+### Códigos de falha de job
+
+`error.code` em `/status/{job_id}` é um conjunto fechado de sete:
+`AUDIO_NAO_ENCONTRADO`, `TRANSCRIPTION_ERROR`, `DIARIZATION_ERROR`,
+`IDENTIFICATION_ERROR`, `SUMMARIZATION_ERROR`, `EXTRACTION_ERROR`,
+`WORKER_MAX_TENTATIVAS_EXCEDIDO` (o job órfão: o worker morreu no meio, o job
+foi reenfileirado 3 vezes e o backend desistiu).
+
+O app traduz por `code` em `job_errors.dart`. O `error.message` **nunca** é
+exibido: é o `str(exc)` da exceção Python, em inglês e às vezes com caminho de
+arquivo do servidor dentro.
 
 ## Estado da integração
 
@@ -174,11 +248,11 @@ o backend nunca envia esse valor.
 | Escopo por usuário | jobs e vozes por `user_id` | derivado do token | ✅ em dia |
 | Resultado | schema completo | `meeting_result.dart` espelha | ✅ em dia |
 | Upload | `participants` como JSON | envia JSON | ✅ em dia |
-| Amostra de voz | endpoint dedicado | envia uma vez no cadastro | ✅ em dia |
-| Push de progresso | `/ws` ainda é stub (Fase 8) | polling como fallback obrigatório | pendente **no backend** |
-| Histórico | `GET /meetings` | lista local em `shared_preferences` | divergente, não bloqueante |
+| Amostra de voz | endpoint dedicado | envia uma vez no cadastro, e confere o estado em `GET .../voice-profile` ao abrir a tela | ✅ em dia |
+| Push de progresso | `/ws` empurra até `done`/`error` (Fase 8, validada em 05/09/2026) | lê em laço, com polling como fallback obrigatório | ✅ em dia |
+| Histórico | `GET /meetings` | lista local em `shared_preferences` | divergente, migração acordada mas não agendada |
 | Dados no aparelho | escopados por `user_id` | chaves escopadas (`local_scope.dart`) | ✅ em dia |
-| Papel de administrador | não existe | `AppUser.isAdmin` sobrou do login mock, sempre `false` | vestigial |
+| Papel de administrador | não existe, e não há plano de existir | removido do app | ✅ resolvido |
 
 ### Como a sessão funciona
 
@@ -191,7 +265,11 @@ o backend nunca envia esse valor.
   como caminho principal.
 - **Uma renovação por vez.** Chamadas concorrentes com o token vencido
   compartilham o mesmo `/auth/refresh`. O backend revoga o refresh token no
-  uso, então N renovações paralelas fariam N−1 falharem.
+  uso (rotação estrita, sem janela de graça — confirmado em 07/09/2026), então
+  N renovações paralelas fariam N−1 falharem. Não há detecção de reuso em
+  cascata: um refresh que escape da serialização custa uma chamada com 401,
+  não a sessão. Se o backend adicionar reuse-detection, isto vira crítico —
+  eles avisam antes.
 - **Falha de rede não desloga.** Só um 401 no próprio refresh encerra a
   sessão; timeout ou queda de conexão preserva o token para a próxima
   tentativa.
