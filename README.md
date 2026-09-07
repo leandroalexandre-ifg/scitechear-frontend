@@ -183,3 +183,7 @@ Recomendado sobre o emulador — evita problemas de captura de áudio do emulado
 ```
 
 Se o aparelho for desconectado e reconectado, repita o passo 4 (`adb reverse`).
+Para não precisar repetir manualmente durante uma sessão de testes mais
+longa, rode `scripts/watch-adb-reverse.sh` numa aba de terminal separada —
+ele fica em loop e reaplica o túnel automaticamente assim que o aparelho
+reconectar.

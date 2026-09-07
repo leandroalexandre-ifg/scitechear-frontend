@@ -65,8 +65,29 @@ erro real, nunca inventa um conteúdo.
 ### 3.3. `MeetingSetupScreen` — antes de gravar
 
 Onde o título da reunião é definido e os participantes são selecionados
-ou cadastrados. É aqui, e só aqui, que uma amostra de voz é gravada e
-sincronizada com o backend — nunca durante a gravação da reunião em si.
+ou cadastrados (em `ParticipantsScreen`). Ter participantes na lista, ou
+que algum deles tenha voz cadastrada, **não é obrigatório para iniciar a
+gravação** — o botão "Iniciar Gravação" fica sempre habilitado. Essa é uma
+decisão deliberada, não uma omissão: a identificação por voz já é opcional
+por design do lado do backend (seção 7 de
+[`docs/ARCHITECTURE.md`](./ARCHITECTURE.md#7-por-que-diarização-e-identificação-são-etapas-separadas)) —
+quem não tem amostra cadastrada aparece no resultado com o rótulo genérico
+do cluster, e o processamento continua normalmente. Exigir participantes
+no cliente antes de deixar o usuário começar a gravar seria replicar, na
+UI, uma restrição que o backend nunca teve.
+
+É em `ParticipantsScreen`, através do bottom sheet `VoiceSampleSheet`, e
+só ali, que uma amostra de voz é gravada e sincronizada com o backend —
+nunca durante a gravação da reunião em si. A captura dura 20 segundos
+(constante `_maxSeconds` em `voice_sample_sheet.dart` — única fonte de
+verdade; o cronômetro e a barra de progresso são calculados a partir
+dela, não duplicados). Durante a gravação, uma frase-guia fica visível na
+tela para o usuário ler em voz alta — ajuda a capturar uma amostra mais
+consistente do que pedir para a pessoa "falar algo" sem roteiro. O rótulo
+da tela foi renomeado de "Cadastrar participante" para "Cadastro de
+Biometria da Voz", para deixar explícito que aquele fluxo é sobre biometria
+de voz do participante — distinto do cadastro de usuário do próprio app
+(`AuthScreen`), que é outro conceito e não deve ser confundido com este.
 
 ### 3.4. `RecordingScreen` — durante a reunião
 
@@ -74,6 +95,79 @@ Grava o áudio (WAV, 16kHz, mono, o formato exato que o backend espera) e,
 ao finalizar, envia ao servidor. Reflete o princípio da seção 6: se o
 envio falhar, o erro real é mostrado, com a opção de tentar reenviar o
 mesmo arquivo já gravado (sem precisar regravar a reunião do zero).
+
+**Bug crítico encontrado e corrigido: truncamento silencioso de reuniões
+longas.** Vale registrar em detalhe porque a causa é sutil e
+pode reaparecer se `audio_service.dart` for mexido sem essa memória. O
+sintoma: uma reunião gravada por minutos (testado com mais de 3 minutos,
+em um tablet Samsung) resultava em um arquivo de áudio válido, mas com
+apenas ~45 segundos de duração — sem nenhum erro visível no app, em
+nenhum momento. A causa raiz está inteiramente no lado nativo do pacote
+`record`, e o app nunca tinha visibilidade sobre ela:
+
+- `AudioRecorder` (o wrapper do pacote `record`) expõe um
+  `onStateChanged()` — um stream de estados (`record`/`pause`/`stop`) que
+  também carrega, via `onError` da subscription, qualquer exceção lançada
+  pelo gravador nativo. Nem `AudioService` nem `RecordingScreen` nunca
+  escutaram esse stream — só o stream de amplitude (`onAmplitudeChanged`)
+  era consumido.
+- No Android, quando o `AudioRecord` nativo falha em ler o buffer de áudio
+  (por exemplo, `AudioRecord.ERROR_DEAD_OBJECT` — um erro documentado,
+  comum especificamente em aparelhos Samsung sob otimização agressiva de
+  bateria/memória, onde o serviço de áudio do sistema é reiniciado), a
+  thread de gravação nativa captura a exceção, finaliza o encoder
+  normalmente e escreve um header WAV correto para os dados já
+  capturados até aquele ponto. O resultado é um arquivo **válido e
+  limpo**, só que **truncado** — não corrompido, não vazio, o que tornava
+  o sintoma difícil de associar à causa sem investigar o pacote nativo.
+- O erro é, de fato, propagado para o lado Dart (via
+  `sendStateErrorEvent`) — mas cai no vazio, porque nada está inscrito em
+  `onStateChanged()`. Minutos depois, quando o usuário toca em "parar",
+  `_audio.stop()` simplesmente devolve o caminho do arquivo já finalizado,
+  sem lançar exceção — do ponto de vista do Dart, tudo pareceu correr bem.
+
+**A correção:** `RecordingScreen` agora escuta `stateStream` durante a
+gravação e trata qualquer parada que não tenha partido do usuário
+(`_handleUnexpectedStop`): para o cronômetro e a waveform, desliga o
+serviço de segundo plano, recupera o arquivo parcial e mostra na hora um
+aviso dizendo quanto tempo de fato foi gravado, com a escolha entre
+descartar ou enviar o trecho que sobrou. Truncado é melhor do que
+perdido — o backend processa normalmente o que receber —, mas quem
+decide é o usuário, que é o único que sabe se vale analisar só o começo
+da reunião.
+
+Três detalhes do lado nativo que a implementação depende, confirmados em
+`record_android` e que valem checar de novo se o pacote for atualizado:
+
+- Em falha, `RecordThread` chama `onFailure(ex)` e, no `finally`,
+  `onStop()`. O Dart recebe **os dois** — o erro pela `onError` da
+  subscription e o `RecordState.stop` pelo stream. Por isso o tratamento
+  tem um guard sincrônico (`_handlingInterruption`), senão rodaria duas
+  vezes.
+- Uma parada normal, pedida pelo usuário, também emite `RecordState.stop`.
+  O que distingue as duas é que `_stopAndUpload` cancela a inscrição
+  *antes* de chamar `stop()` — então um `stop` que chegue ao listener é,
+  por construção, sempre inesperado.
+- Depois da falha, `onStop()` zera o `recorderThread` nativo. A chamada
+  seguinte a `stop()` cai no ramo em que a thread já não existe e apenas
+  devolve o caminho configurado, sem lançar — é assim que o áudio parcial
+  é recuperado. `_currentPath` (o retorno de `start()`) fica como rede de
+  segurança para o caso de `stop()` devolver nulo.
+
+Fica em aberto a alternativa mais ambiciosa: em vez de encerrar a
+reunião, reiniciar o gravador e concatenar os trechos. Exigiria juntar
+WAVs no dispositivo (descartar headers, emendar o PCM, reescrever o
+header final) e ainda assim deixaria um buraco de áudio no ponto da
+falha. Só vale o custo se a interrupção se mostrar frequente no uso real.
+
+**Achado relacionado, esse já corrigido:** o áudio da reunião estava sendo
+gravado em `getTemporaryDirectory()` (diretório de cache do Android,
+sujeito a limpeza pelo sistema operacional a qualquer momento), diferente
+da amostra de voz, que sempre usou `persistent: true`
+(`getApplicationDocumentsDirectory()`). Corrigido para `persistent: true`
+também na gravação da reunião — importa especialmente para reuniões
+longas (1h+), que passam bem mais tempo em disco, aguardando a gravação
+terminar e o upload completar, do que uma amostra de voz de 20 segundos.
 
 ### 3.5. `ProcessingScreen` — acompanhando o processamento
 
@@ -83,13 +177,45 @@ Mostra visualmente os seis estágios não-terminais do job
 tratado como mais um passo da lista — vira uma tela de erro própria e
 distinta, com título, mensagem específica (vinda do `error.message` do
 backend, quando disponível) e as opções de tentar novamente ou voltar.
+Um botão explícito de voltar para `HomeScreen` também está disponível
+durante o acompanhamento ativo do processamento, não só na tela de erro —
+antes, a única saída enquanto o job ainda estava rodando era o gesto de
+voltar do sistema. Isso é seguro porque a reunião já é registrada no
+histórico local logo no início do job (`queued`, em
+`recording_screen.dart`, antes mesmo de navegar para esta tela) — sair
+cedo não faz o usuário perder a reunião de vista.
 
 ### 3.6. `ResultScreen` — o resultado final
 
 Exibe a transcrição, organizada por segmento e por falante, e as perguntas
 extraídas (explícitas e implícitas), em abas. O texto de cada segmento e
 de cada pergunta é exibido exatamente como veio do backend, sem
-reprocessamento no cliente.
+reprocessamento no cliente. O botão de voltar para `HomeScreen`, no
+cabeçalho, ganhou um `tooltip` explícito ("Voltar às suas reuniões") — o
+comportamento de navegação (limpar a pilha até a tela inicial) já estava
+correto, o que faltava era deixar o propósito do ícone óbvio para quem
+não reconhece o ícone de casa de cara.
+
+### 3.7. Convenções de campos de texto
+
+Campos de texto livre relevante — título da reunião (`MeetingSetupScreen`,
+e o diálogo de renomear em `HomeScreen`) e nome de participante
+(`ParticipantsScreen`, e "Nome completo" em `AuthScreen`) — usam
+`textCapitalization`, ajustado por campo: `.sentences` para os campos de
+título (só a primeira letra do texto maiúscula, já que um título é mais
+frase do que uma sequência de palavras próprias) e `.words` para os campos
+de nome de pessoa (cada parte do nome capitalizada). E-mail, senha e o
+campo de e-mail de destinatário (`ResultScreen`, envio de perguntas) ficam
+deliberadamente sem capitalização automática — não faz sentido para
+credenciais nem para endereços de e-mail.
+
+Acentuação e cedilha (relevantes porque o app é em português do Brasil)
+nunca tiveram um `inputFormatter` bloqueando — não havia nenhum restringindo
+caracteres em nenhum campo. Um teste (`test/text_encoding_test.dart`)
+cobre o round-trip de nomes acentuados através de `jsonEncode`/`jsonDecode`
+(persistência local via `SharedPreferences`) e do `FormData` do dio
+(multipart enviado ao backend), como validação de que nenhuma das duas
+camadas de codificação corrompe o texto.
 
 ## 4. Serviços — a lógica por trás das telas
 
@@ -143,6 +269,33 @@ mantém a gravação ativa mesmo com a tela do aparelho bloqueada, no
 Android, através de um serviço em primeiro plano (foreground service) com
 uma notificação persistente — sem isso, o sistema operacional encerraria a
 gravação assim que a tela fosse bloqueada.
+
+Um bug real e sério já foi encontrado aqui, vale registrar em detalhe (ver
+também o relato em §3.4, do ponto de vista da tela): o gravador nativo do
+Android pode falhar internamente durante uma gravação longa — o caso
+observado foi `AudioRecord.ERROR_DEAD_OBJECT`, comum em aparelhos Samsung
+sob otimização agressiva de bateria/memória, mas a causa nativa exata pode
+variar por fabricante. Quando isso acontece, o pacote `record` finaliza o
+arquivo WAV corretamente até aquele ponto (arquivo válido, só que
+truncado) e propaga o erro para o Dart através do `onError` de
+`AudioRecorder.onStateChanged()` — um stream que `AudioService` não
+expunha e que nenhuma tela consumia. `AudioService` agora expõe esse
+stream como `stateStream`; `RecordingScreen` já o escuta, mas hoje só para
+diagnóstico (loga o evento, não reage) — a reação de verdade (tentar
+retomar a gravação, ou avisar o usuário imediatamente que a captura parou
+antes do esperado) ainda está pendente. Isso é importante o suficiente
+para repetir aqui: **qualquer mudança futura em `audio_service.dart` deve
+manter `stateStream` sendo escutado por quem grava a reunião** — é a única
+forma que o app tem de saber que o gravador nativo morreu no meio do
+caminho.
+
+Também foi corrigido, no mesmo bug: a gravação da reunião usava
+`persistent: false` (salvando em `getTemporaryDirectory()`, o cache do
+Android, que o sistema pode limpar a qualquer momento), enquanto a
+amostra de voz sempre usou `persistent: true`
+(`getApplicationDocumentsDirectory()`). Agora ambas usam `persistent:
+true` — relevante porque reuniões podem passar mais de uma hora em disco
+entre o início da gravação e o upload terminar.
 
 ### 4.5. `offline_service.dart` — cache e modo de demonstração
 
@@ -265,6 +418,17 @@ segmentos não identificados e perguntas implícitas com campos nulos) e o
 comportamento de fallback de rede (WebSocket falhando e caindo em
 polling), em vez de depender de um backend real rodando durante a suíte
 de testes.
+
+Testar em dispositivo físico é o caminho recomendado (evita problemas de
+captura de áudio específicos do emulador) — o passo a passo completo está
+no README, em ["Rodando em dispositivo
+físico (Android)"](../README.md#rodando-em-dispositivo-físico-android).
+O túnel `adb reverse` precisa ser refeito manualmente sempre que o cabo
+USB é desconectado e reconectado; `scripts/watch-adb-reverse.sh` automatiza
+isso, ficando em loop e reaplicando o túnel assim que o dispositivo
+reaparece — útil para deixar rodando numa aba de terminal separada durante
+uma sessão de testes mais longa, em vez de repetir o comando manualmente a
+cada desconexão.
 
 ## 10. Escopo da V1
 
