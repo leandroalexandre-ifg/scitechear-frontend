@@ -375,3 +375,38 @@ Para não precisar repetir manualmente durante uma sessão de testes mais
 longa, rode `scripts/watch-adb-reverse.sh` numa aba de terminal separada —
 ele fica em loop e reaplica o túnel automaticamente assim que o aparelho
 reconectar.
+
+### Contra o backend implantado (NumbERS), em vez do local
+
+Troca os passos 5 e 6 acima por um túnel SSH; **o app não muda**, continua
+apontando para `127.0.0.1:8000`:
+
+```
+aparelho  --adb reverse (USB)-->  máquina de dev  --ssh -L (VPN)-->  NumbERS
+  :8000                               :8000                          :18080
+```
+
+```bash
+# com a VPN do IFG ligada; deixe rodando
+ssh -N -L 8000:127.0.0.1:18080 <usuario>@<ip-do-servidor>
+adb reverse tcp:8000 tcp:8000
+curl -s http://127.0.0.1:8000/health     # {"status":"ok"} antes de abrir o app
+```
+
+Use o IP: `<nome-do-servidor>` não resolve (o search domain da máquina é
+`ifg.br`). Não há HTTPS neste caminho e não é descuido — o trecho
+aparelho→máquina é USB e o trecho máquina→servidor é o próprio SSH; o HTTP
+puro só existe em loopback dentro de cada máquina.
+
+Duas consequências de tudo chegar como `127.0.0.1`:
+
+- **O balde de rate limit do `/auth/register` (10 falhas/IP/60 min) é um só**
+  para todas as contas e clientes. Um 403 de domínio fora da allowlist e um
+  409 de e-mail repetido contam como falha.
+- "Sem conexão com o servidor" na tela não distingue app, `adb reverse`, túnel
+  ou VPN. Confira o `/health` e o `adb reverse --list` antes de investigar o
+  app — o `ssh -N -L` cai em silêncio quando a VPN oscila.
+
+Para o roteiro do teste conjunto, ver `PREPARO_TESTE_CONJUNTO_APP.md` (lado do
+app) e o documento equivalente do backend (túnel, contas, `smoke_contrato` e
+journal).
