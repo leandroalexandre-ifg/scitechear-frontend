@@ -13,8 +13,7 @@ API implantada: cadastro, login, upload, WebSocket e resultado. Ver
 > inteiro) · [`docs/FRONTEND_ARCHITECTURE.md`](docs/FRONTEND_ARCHITECTURE.md)
 > (este app, tela a tela e serviço a serviço) ·
 > [`docs/TESTE_CONJUNTO.md`](docs/TESTE_CONJUNTO.md) (como rodar contra o
-> backend implantado) · [`docs/integracao/`](docs/integracao/) (como o
-> contrato com o backend foi decidido).
+> backend implantado).
 
 ## Arquitetura
 
@@ -372,7 +371,6 @@ O fluxo de telas e serviços, em mais detalhe:
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Contexto geral, máquina de estados do job, sequência ponta a ponta, contrato de dados |
 | [`docs/FRONTEND_ARCHITECTURE.md`](docs/FRONTEND_ARCHITECTURE.md) | Telas, serviços, modelos, sessão e escopo, validação ponta a ponta |
 | [`docs/TESTE_CONJUNTO.md`](docs/TESTE_CONJUNTO.md) | Rodar o app contra o backend implantado: túnel, roteiro, o que observar |
-| [`docs/integracao/`](docs/integracao/) | A correspondência com o backend — onde o contrato foi decidido |
 
 ## Rodando em dispositivo físico (Android)
 

@@ -376,9 +376,6 @@ app (não em runtime, para evitar ficar "esquecido ligado").
 - [`docs/FRONTEND_ARCHITECTURE.md`](./FRONTEND_ARCHITECTURE.md) —
   detalhamento completo do app: cada tela, cada serviço, os modelos de
   dados.
-- [`docs/integracao/`](./integracao/) — a correspondência entre os dois
-  repositórios em 07/09/2026, onde as decisões de contrato abaixo foram
-  tomadas. Registro histórico, não referência.
 - `SciTech_Ear_Especificacao_Final_Implementacao.docx` — a
   especificação de implementação original, usada como fonte de verdade
   durante o desenvolvimento da V1. Este documento de arquitetura é a
