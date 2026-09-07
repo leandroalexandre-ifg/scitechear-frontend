@@ -19,7 +19,7 @@ void main() {
 
   test('FormData (multipart) preserva acentos e cedilha nos campos', () async {
     final formData = FormData();
-    formData.fields.add(MapEntry('title', 'Reunião com José e Conceição'));
+    formData.fields.add(const MapEntry('title', 'Reunião com José e Conceição'));
     formData.fields.add(
       MapEntry('participants', jsonEncode(names.map((n) => {'name': n}).toList())),
     );
