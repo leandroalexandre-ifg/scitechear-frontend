@@ -4,11 +4,8 @@ App Flutter (cliente fino) para gravar reuniões, enviá-las a um backend de IA 
 
 Todo o processamento pesado (transcrição, diarização, extração de perguntas) roda no backend — o app apenas grava, envia e exibe o resultado. Quando o backend não responde, o app mostra o erro real: nunca fabrica um resultado para disfarçar a falha. Existe um modo de demonstração com dados fictícios, mas ele só liga por compilação explícita (`--dart-define=SCITECH_DEMO_MODE=true`).
 
-> ⚠️ **O app ainda não fala com o backend atual.** Desde 03/09/2026 o backend
-> exige autenticação real (JWT) em *todas* as rotas usadas pelo app, e o
-> `auth_service.dart` daqui continua sendo um mock local que nunca emite
-> token — ou seja, hoje todas as chamadas voltariam 401. Ver
-> [Estado da integração](#estado-da-integração).
+O app autentica de verdade contra o backend (`/auth/*`, JWT com refresh
+token). Ver [Estado da integração](#estado-da-integração).
 
 > Para o documento completo de arquitetura (diagrama do sistema, camadas, contrato com o backend e recomendações), veja [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md).
 
@@ -33,7 +30,7 @@ Backend (repositório separado — implementado)
 
 ## Funcionalidades
 
-- **Login** com conta fixa pré-cadastrada (`leandro` / `leandro`, administrador) ou cadastro dinâmico de qualquer usuário/senha — **mock local, ainda não integrado ao `/auth` real do backend**
+- **Login e cadastro** contra o `/auth` do backend (JWT + refresh token, senha de no mínimo 8 caracteres). A sessão sobrevive ao fechamento do app e é renovada automaticamente; quando o refresh token é revogado ou expira, o app volta sozinho para a tela de login
 - **Cadastro de participantes**: registro persistente e reutilizável entre reuniões, cada um podendo gravar uma amostra de voz (enviada uma única vez ao backend, para identificação por biometria)
 - **Configuração da reunião**: título (editável) e seleção dos participantes que estarão presentes
 - **Gravação**: captura de áudio em WAV 16 kHz mono, com visualização de forma de onda em tempo real, funcionando em segundo plano com a tela bloqueada. Uma parada inesperada do gravador (falha do aparelho) é detectada na hora, com opção de enviar o trecho recuperado
@@ -83,7 +80,8 @@ lib/
     processing_screen.dart         # upload + acompanhamento de status (com fallback offline)
     result_screen.dart             # transcrição e perguntas extraídas
   services/
-    auth_service.dart              # login/cadastro/logout (mock local via shared_preferences)
+    api_client.dart                # tokens JWT, header Authorization e renovação automática
+    auth_service.dart              # login/cadastro/logout contra /auth do backend
     audio_service.dart             # grava WAV 16kHz mono via `record`
     background_service.dart        # foreground service (Android) + wakelock
     upload_service.dart            # upload multipart do áudio da reunião
@@ -167,22 +165,40 @@ o backend nunca envia esse valor.
 
 ## Estado da integração
 
-O contrato de dados do resultado já está em sincronia: `meeting_result.dart`
-espelha exatamente o schema atual do backend. O que falta é autenticação.
-
 | Área | Backend | App | Situação |
 |---|---|---|---|
-| Autenticação | `/auth/*` com JWT (access + refresh), Argon2id, rate limiting | mock local em `auth_service.dart`, sem token | **bloqueante** |
-| Rotas protegidas | todas exigem `Bearer` | nenhuma chamada envia header | **bloqueante** — 401 |
-| WebSocket | exige `?token=` | conecta sem token | **bloqueante** — fecha 4401 |
-| Escopo por usuário | jobs e vozes por `user_id` | assume dados globais | depende da auth |
+| Autenticação | `/auth/*`, JWT (access 30min + refresh 30 dias), Argon2id, rate limiting | `auth_service.dart` + `api_client.dart` | ✅ em dia |
+| Rotas protegidas | exigem `Bearer` | injetado pelo interceptor, com renovação automática | ✅ em dia |
+| WebSocket | exige `?token=` | token na query string | ✅ em dia |
+| Escopo por usuário | jobs e vozes por `user_id` | derivado do token | ✅ em dia |
 | Resultado | schema completo | `meeting_result.dart` espelha | ✅ em dia |
 | Upload | `participants` como JSON | envia JSON | ✅ em dia |
 | Amostra de voz | endpoint dedicado | envia uma vez no cadastro | ✅ em dia |
-| Histórico | `GET /meetings` | lista local | divergente, não bloqueante |
+| Push de progresso | `/ws` ainda é stub (Fase 8) | polling como fallback obrigatório | pendente **no backend** |
+| Histórico | `GET /meetings` | lista local em `shared_preferences` | divergente, não bloqueante |
+| Papel de administrador | não existe | `AppUser.isAdmin` sobrou do login mock, sempre `false` | vestigial |
 
-Enquanto a autenticação real não entrar no app, o caminho para demonstrar o
-fluxo é `--dart-define=SCITECH_DEMO_MODE=true`.
+### Como a sessão funciona
+
+`api_client.dart` é o dono do par de tokens e o único ponto que fala
+`Authorization`:
+
+- **Renovação proativa.** Antes de cada requisição, se o access token vence
+  em menos de 2 minutos, ele é renovado. O 401 com reenvio existe como
+  rede de segurança (token revogado no servidor, relógio fora de hora), não
+  como caminho principal.
+- **Uma renovação por vez.** Chamadas concorrentes com o token vencido
+  compartilham o mesmo `/auth/refresh`. O backend revoga o refresh token no
+  uso, então N renovações paralelas fariam N−1 falharem.
+- **Falha de rede não desloga.** Só um 401 no próprio refresh encerra a
+  sessão; timeout ou queda de conexão preserva o token para a próxima
+  tentativa.
+- **Expiração é tratada em um lugar.** `main.dart` escuta
+  `ApiClient.onSessionExpired` e leva o usuário de volta ao login, em vez de
+  cada tela ter que decidir o que fazer com um 401.
+
+Para apresentar o fluxo sem servidor no ar, o caminho continua sendo
+`--dart-define=SCITECH_DEMO_MODE=true`.
 
 ## Notas importantes sobre gravação em segundo plano
 
@@ -210,7 +226,8 @@ flutter test
 - Não adicionar alvos desktop/web como objetivo — eles existem apenas como scaffold do `flutter create`
 - Não processar áudio no dispositivo — todo o ML roda no backend
 - Não armazenar gravações permanentemente no dispositivo — enviar e descartar
-- Não usar o login mock atual como autenticação real — o backend de auth **já existe** (`/auth/*`, JWT), então o mock deixou de ser um placeholder à espera e passou a ser o que impede o app de funcionar contra o backend
+- Não guardar token fora do `api_client.dart` — uma segunda cópia dessincroniza na primeira renovação, e o app passa a alternar entre chamadas válidas e 401
+- Não criar `Dio` avulso para falar com o backend: use `ApiClient.instance.client()`, senão a requisição sai sem `Authorization`
 - Não fazer o app cair em resultado fictício quando o backend falha — o modo demo é sempre uma escolha de compilação, nunca um fallback silencioso de rede
 
 ## Documentação de arquitetura

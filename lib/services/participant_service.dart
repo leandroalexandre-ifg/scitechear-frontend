@@ -2,15 +2,15 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../config.dart';
 import '../models/participant.dart';
+import 'api_client.dart';
 
 /// Cadastro persistente de participantes (com biometria de voz), reutilizável
 /// entre reuniões diferentes.
 class ParticipantService {
   static const _key = 'registered_participants';
 
-  final Dio _dio = Dio(BaseOptions(baseUrl: AppConfig.backendBaseUrl));
+  final Dio _dio = ApiClient.instance.client();
 
   Future<List<Participant>> loadAll() async {
     final prefs = await SharedPreferences.getInstance();

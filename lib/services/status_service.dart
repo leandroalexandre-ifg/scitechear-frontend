@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:dio/dio.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../config.dart';
 import '../models/meeting_result.dart';
+import 'api_client.dart';
 
 /// Acompanha o progresso de um job e busca o resultado final.
 ///
@@ -17,7 +17,7 @@ import '../models/meeting_result.dart';
 /// não for terminal (done/error), cai para o polling. Não "simplificar"
 /// isso de volta para WS-only até o backend realmente empurrar progresso.
 class StatusService {
-  final Dio _dio = Dio(BaseOptions(baseUrl: AppConfig.backendBaseUrl));
+  final _dio = ApiClient.instance.client();
   WebSocketChannel? _channel;
 
   /// Abre um stream de status via WebSocket, com fallback de polling.
@@ -45,8 +45,19 @@ class StatusService {
     }
 
     try {
+      // O token vai por query param, não por header: o handshake de
+      // WebSocket não aceita `Authorization` em todo cliente, e é assim que
+      // o backend o lê (fecha com 4401 sem token, 4404 se o job for de
+      // outro usuário). Sem sessão não adianta tentar — vai direto para o
+      // polling, que produz uma mensagem de erro melhor.
+      final token = await ApiClient.instance.validAccessToken();
+      if (token == null) {
+        startPolling();
+        return;
+      }
       _channel = WebSocketChannel.connect(
-        Uri.parse('${AppConfig.backendWsUrl}/ws/$jobId'),
+        Uri.parse('${AppConfig.backendWsUrl}/ws/$jobId'
+            '?token=${Uri.encodeQueryComponent(token)}'),
       );
       // A conexão do WebSocket é assíncrona; `ready` só completa (ou lança)
       // depois do handshake, então é aqui que falhas de conexão aparecem.

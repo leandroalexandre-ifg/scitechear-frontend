@@ -47,10 +47,19 @@ que vale revisitar.
 
 ### 3.1. `AuthScreen` — entrada
 
-Login e cadastro do usuário. Hoje é uma implementação simplificada, sem um
-backend de autenticação real por trás — uma limitação conhecida e
-aceitável para a V1, que deverá ser substituída por autenticação de
-verdade antes de qualquer uso além de testes internos.
+Login e cadastro contra o `/auth` do backend. Até a integração da
+autenticação real, era um mock local que aceitava qualquer credencial e
+tinha uma conta fixa embutida — o que deixou de funcionar quando o backend
+passou a exigir JWT em todas as rotas.
+
+Duas restrições da tela vêm diretamente do contrato do servidor, e é por
+isso que elas são validadas aqui em vez de simplesmente deixar o erro
+voltar: o campo de identificação é **só e-mail** (o backend tipa como
+`EmailStr`; um nome de usuário voltaria 422 antes de qualquer verificação
+de credencial), e a senha tem **mínimo de 8 caracteres no cadastro**
+(`Field(min_length=8)`). No login não se valida o tamanho — quem tenha uma
+senha mais curta de antes precisa conseguir entrar, e o veredito é do
+servidor.
 
 ### 3.2. `HomeScreen` — ponto de partida
 
@@ -219,6 +228,60 @@ camadas de codificação corrompe o texto.
 
 ## 4. Serviços — a lógica por trás das telas
 
+### 4.0. `api_client.dart` e `auth_service.dart` — sessão
+
+`ApiClient` é o dono do par de tokens e o único lugar do app que fala
+`Authorization`. É singleton de propósito: o token é estado de processo, e
+uma segunda cópia dessincronizaria na primeira renovação — o app passaria a
+alternar entre chamadas válidas e 401 conforme qual serviço tivesse falado
+primeiro com o backend. Quem precisa de HTTP autenticado pede
+`ApiClient.instance.client()`, que devolve um `Dio` novo (os timeouts
+variam muito: o upload espera minutos, o polling de status espera segundos)
+já com o interceptor. O que se compartilha é o token, não a configuração de
+rede.
+
+Quatro decisões que valem registrar:
+
+- **Renovar antes de vencer, não depois de falhar.** Antes de cada
+  requisição, se o access token expira em menos de 2 minutos, ele é
+  renovado. O reenvio após 401 existe como rede de segurança — token
+  revogado no servidor, relógio do aparelho fora de hora —, não como
+  caminho principal. Isso também evita o caso chato de reenviar um upload:
+  o corpo multipart já foi consumido no primeiro envio, e só é recuperável
+  via `FormData.clone()` (que o reenvio faz, mas é melhor não depender
+  disso).
+- **Uma renovação por vez.** Chamadas concorrentes com o token vencido
+  compartilham o mesmo `/auth/refresh` (`_refreshInFlight`). O backend
+  revoga o refresh token no momento em que ele é usado, então N renovações
+  paralelas fariam N−1 falharem — e o usuário seria deslogado por estar
+  usando o app em duas telas ao mesmo tempo.
+- **Falha de rede não desloga.** Só um 401 no próprio refresh encerra a
+  sessão. Timeout ou conexão caída preserva o token: perder a sessão a cada
+  oscilação de Wi-Fi seria pior do que um erro passageiro.
+- **Expiração tratada em um ponto só.** `ApiClient` emite
+  `onSessionExpired`; `main.dart` escuta, avisa e leva de volta ao login.
+  Sem isso, toda tela precisaria saber distinguir um 401 sobre a operação
+  que ela pediu de um 401 que significa "a sessão acabou".
+
+`AuthService` fica com o que é de autenticação e não de transporte: as
+chamadas a `/auth/*`, o `AppUser` corrente e a tradução dos erros do
+servidor para mensagens em português (401 credencial, 409 e-mail já
+cadastrado, 429 com o `Retry-After`, 422 validação). Ele usa
+`ApiClient.public` — um `Dio` sem interceptor — porque um 401 no login *é*
+a resposta esperada, não um gatilho de renovação.
+
+Dois detalhes do contrato que a implementação absorve:
+`/auth/register` devolve o usuário criado, não um par de tokens, então o
+cadastro faz o login logo em seguida (fazer o usuário digitar de novo o que
+acabou de preencher seria repassar a ele um detalhe da API); e `/auth/logout`
+precisa do refresh token no corpo para revogá-lo de fato — esquecer só
+localmente deixaria o token válido por 30 dias.
+
+`AppUser.isAdmin` sobrou do login mock e hoje é sempre `false`: o
+`UserPublic` do backend não tem noção de papel. O campo e o selo de
+administrador na `HomeScreen` ficaram no lugar, inertes, à espera de o
+backend ganhar papéis — não são um recurso ativo.
+
 ### 4.1. `participant_service.dart` — identidade e voz
 
 Gerencia os dados do participante localmente e sincroniza a amostra de voz
@@ -246,6 +309,11 @@ convertidos em uma exceção tipada (`UploadException`), com mensagens
 específicas e acionáveis (timeout, sem conexão, erro retornado pelo
 servidor), em vez de um erro genérico indiferenciado.
 
+Uma correção relacionada: a mensagem de erro do servidor era lida de
+`data['message']`, campo que o FastAPI não usa — ele devolve `detail`. Na
+prática nenhum erro de servidor jamais chegava ao usuário, todos caíam no
+texto genérico com o código HTTP.
+
 ### 4.3. `status_service.dart` — acompanhando o job
 
 Tenta primeiro um canal WebSocket para receber atualizações de status em
@@ -260,6 +328,13 @@ uma implementação de servidor que fecha a conexão WebSocket após enviar
 uma única atualização (um comportamento válido, ainda que minimalista)
 faria a tela de processamento travar indefinidamente na primeira
 atualização recebida.
+
+O token vai na query string (`/ws/{job_id}?token=...`), não em header: o
+handshake de WebSocket não aceita `Authorization` em todo cliente, e é
+assim que o backend o lê — sem token ele fecha com 4401, e com 4404 se o
+job for de outro usuário. Sem sessão, nem se tenta conectar: cai direto no
+polling, que produz uma mensagem de erro melhor do que um WebSocket
+fechando sem explicação.
 
 ### 4.4. `audio_service.dart` e `background_service.dart` — a captação
 

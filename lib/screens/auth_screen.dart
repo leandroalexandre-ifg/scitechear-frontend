@@ -32,6 +32,17 @@ class _AuthScreenState extends State<AuthScreen> {
     super.dispose();
   }
 
+  /// Checagem só para pegar erro de digitação antes da viagem à rede — a
+  /// validação que vale é a do backend (`EmailStr`).
+  String? _validateEmail(String? value) {
+    final email = value?.trim() ?? '';
+    if (email.isEmpty) return 'Informe o e-mail';
+    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email)) {
+      return 'E-mail inválido';
+    }
+    return null;
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _loading = true);
@@ -165,39 +176,32 @@ class _AuthScreenState extends State<AuthScreen> {
                     ],
                   ),
           ),
+          // Só e-mail: o backend valida o campo como EmailStr, então um nome
+          // de usuário seria recusado com 422 antes de chegar a qualquer
+          // verificação de credencial.
           _field(
             ctrl: _emailCtrl,
-            label: _isLogin ? 'E-mail ou usuário' : 'E-mail',
+            label: 'E-mail',
             icon: Icons.alternate_email_rounded,
-            type: _isLogin ? TextInputType.text : TextInputType.emailAddress,
-            validator: (v) => v!.isEmpty
-                ? (_isLogin ? 'Informe seu e-mail ou usuário' : 'Informe o e-mail')
-                : null,
+            type: TextInputType.emailAddress,
+            validator: _validateEmail,
           ).animate(delay: 220.ms).fadeIn().slideY(begin: 0.3),
-          AnimatedSize(
-            duration: 280.ms,
-            curve: Curves.easeInOut,
-            child: _isLogin
-                ? Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Text(
-                      'Você pode entrar com seu nome de usuário ou e-mail cadastrado.',
-                      style: GoogleFonts.inter(
-                        color: AppColors.textSecondary,
-                        fontSize: 12,
-                      ),
-                    ).animate(delay: 240.ms).fadeIn(),
-                  )
-                : const SizedBox.shrink(),
-          ),
           const SizedBox(height: 14),
           _field(
             ctrl: _passCtrl,
             label: 'Senha',
             icon: Icons.lock_outline_rounded,
             obscure: _obscurePass,
-            validator: (v) =>
-                v!.length < 6 ? 'Mínimo 6 caracteres' : null,
+            // No cadastro, o mínimo de 8 é o mesmo do backend, para o erro
+            // aparecer aqui em vez de voltar como um 422 do servidor. No
+            // login não se valida tamanho: quem tem uma senha antiga mais
+            // curta precisa conseguir entrar, e quem erra recebe a resposta
+            // do servidor.
+            validator: (v) {
+              if (v == null || v.isEmpty) return 'Informe a senha';
+              if (!_isLogin && v.length < 8) return 'Mínimo 8 caracteres';
+              return null;
+            },
             suffix: IconButton(
               icon: Icon(
                 _obscurePass

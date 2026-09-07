@@ -1,117 +1,168 @@
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:dio/dio.dart';
+
 import '../models/user.dart';
+import 'api_client.dart';
 
-// Credenciais fixas pré-cadastradas (admin).
-const _seededUsers = [
-  _SeededUser(
-    username: 'leandro',
-    password: 'leandro',
-    name: 'Leandro',
-    email: 'leandro@reuniao.app',
-    isAdmin: true,
-  ),
-];
+/// Erro de autenticação com mensagem já pronta para exibir ao usuário.
+class AuthException implements Exception {
+  final String message;
+  AuthException(this.message);
 
+  @override
+  String toString() => message;
+}
+
+/// Autenticação real contra o backend (`/auth/*`, JWT + refresh token).
+///
+/// Substituiu um mock local que aceitava qualquer credencial e nunca falava
+/// com o servidor. Os tokens não moram aqui: quem guarda e renova é o
+/// [ApiClient], porque todo serviço autenticado depende deles.
 class AuthService {
-  static const _keyToken = 'auth_token';
-  static const _keyUserId = 'user_id';
-  static const _keyUserName = 'user_name';
-  static const _keyUserEmail = 'user_email';
-  static const _keyUserIsAdmin = 'user_is_admin';
+  final ApiClient _api = ApiClient.instance;
 
   AppUser? _currentUser;
   AppUser? get currentUser => _currentUser;
   bool get isLoggedIn => _currentUser != null;
 
+  /// Recupera a sessão salva no boot do app.
+  ///
+  /// Ter um refresh token no disco não é o mesmo que estar logado — ele pode
+  /// ter sido revogado ou expirado (30 dias). A confirmação é o `/auth/me`
+  /// responder; se ele falhar por credencial, a sessão é descartada.
   Future<void> initialize() async {
-    final prefs = await SharedPreferences.getInstance();
-    if (prefs.getString(_keyToken) != null) {
-      _currentUser = AppUser(
-        id: prefs.getString(_keyUserId) ?? '',
-        name: prefs.getString(_keyUserName) ?? '',
-        email: prefs.getString(_keyUserEmail) ?? '',
-        isAdmin: prefs.getBool(_keyUserIsAdmin) ?? false,
-      );
-    }
-  }
-
-  Future<AppUser> login(String emailOrUsername, String password) async {
-    await Future.delayed(const Duration(milliseconds: 900));
-
-    // Verifica usuários pré-cadastrados (por username ou email).
-    for (final s in _seededUsers) {
-      if ((emailOrUsername == s.username || emailOrUsername == s.email) &&
-          password == s.password) {
-        final user = AppUser(
-          id: 'u_${s.username}',
-          name: s.name,
-          email: s.email,
-          isAdmin: s.isAdmin,
-        );
-        await _save(user, 'tok_${s.username}');
-        _currentUser = user;
-        return user;
+    await _api.restore();
+    if (!_api.hasSession) return;
+    try {
+      _currentUser = await _fetchCurrentUser();
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 401) {
+        await _api.clearSession();
       }
+      // Falha de rede não desloga: o usuário continua sem sessão *nesta*
+      // abertura, mas o refresh token segue no disco para a próxima.
+      _currentUser = null;
     }
-
-    // Fallback: qualquer conta registrada dinamicamente.
-    if (emailOrUsername.isEmpty || password.length < 6) {
-      throw Exception('E-mail/usuário ou senha inválidos.');
-    }
-    final user = AppUser(
-      id: 'u_${emailOrUsername.hashCode.abs()}',
-      name: emailOrUsername.split('@').first,
-      email: emailOrUsername.contains('@')
-          ? emailOrUsername
-          : '$emailOrUsername@reuniao.app',
-    );
-    await _save(user, 'tok_${emailOrUsername.hashCode.abs()}');
-    _currentUser = user;
-    return user;
   }
 
-  Future<AppUser> register(String name, String email, String password) async {
-    await Future.delayed(const Duration(milliseconds: 900));
-    if (name.isEmpty || email.isEmpty || password.length < 6) {
-      throw Exception('Preencha todos os campos (senha mínima: 6 caracteres).');
+  Future<AppUser> login(String email, String password) async {
+    try {
+      final response = await _api.public.post(
+        '/auth/login',
+        data: {'email': email, 'password': password},
+      );
+      await _api.saveSession(response.data as Map<String, dynamic>);
+      final user = await _fetchCurrentUser();
+      _currentUser = user;
+      return user;
+    } on DioException catch (e) {
+      throw AuthException(_messageFor(e, isLogin: true));
     }
-    final user = AppUser(
-      id: 'u_${email.hashCode.abs()}',
-      name: name,
-      email: email,
-    );
-    await _save(user, 'tok_${email.hashCode.abs()}');
-    _currentUser = user;
-    return user;
+  }
+
+  /// Cadastra e já entra.
+  ///
+  /// `/auth/register` devolve o usuário criado, não um par de tokens — por
+  /// isso o login logo em seguida. Fazer o usuário digitar as credenciais de
+  /// novo, na tela seguinte à que ele acabou de preenchê-las, seria só
+  /// repassar a ele um detalhe da API.
+  Future<AppUser> register(String name, String email, String password) async {
+    try {
+      await _api.public.post(
+        '/auth/register',
+        data: {'email': email, 'password': password, 'name': name},
+      );
+    } on DioException catch (e) {
+      throw AuthException(_messageFor(e, isLogin: false));
+    }
+    return login(email, password);
   }
 
   Future<void> logout() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.clear();
+    final refreshToken = _api.refreshToken;
+    _currentUser = null;
+    // Revoga do lado do servidor; esquecer só localmente deixaria o refresh
+    // token válido por 30 dias. Falha aqui não pode impedir o logout local.
+    if (refreshToken != null) {
+      try {
+        await _api.public.post(
+          '/auth/logout',
+          data: {'refresh_token': refreshToken},
+        );
+      } on DioException {
+        // Sem rede: segue com a limpeza local.
+      }
+    }
+    await _api.clearSession();
+  }
+
+  /// Chamado quando o [ApiClient] descobre que a sessão morreu, para o
+  /// estado daqui não continuar dizendo que há um usuário logado.
+  void handleSessionExpired() {
     _currentUser = null;
   }
 
-  Future<void> _save(AppUser user, String token) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_keyToken, token);
-    await prefs.setString(_keyUserId, user.id);
-    await prefs.setString(_keyUserName, user.name);
-    await prefs.setString(_keyUserEmail, user.email);
-    await prefs.setBool(_keyUserIsAdmin, user.isAdmin);
+  Future<AppUser> _fetchCurrentUser() async {
+    final response = await _api.client().get('/auth/me');
+    final data = response.data as Map<String, dynamic>;
+    return AppUser(
+      id: data['user_id'] as String? ?? '',
+      name: (data['name'] as String?)?.trim().isNotEmpty == true
+          ? data['name'] as String
+          : (data['email'] as String? ?? ''),
+      email: data['email'] as String? ?? '',
+    );
   }
-}
 
-class _SeededUser {
-  final String username;
-  final String password;
-  final String name;
-  final String email;
-  final bool isAdmin;
-  const _SeededUser({
-    required this.username,
-    required this.password,
-    required this.name,
-    required this.email,
-    this.isAdmin = false,
-  });
+  String _messageFor(DioException e, {required bool isLogin}) {
+    switch (e.type) {
+      case DioExceptionType.connectionTimeout:
+      case DioExceptionType.sendTimeout:
+      case DioExceptionType.receiveTimeout:
+        return 'O servidor demorou demais para responder. Tente novamente.';
+      case DioExceptionType.connectionError:
+        return 'Não foi possível conectar ao servidor. Verifique o endereço configurado e sua conexão.';
+      case DioExceptionType.badResponse:
+        return _messageForStatus(e, isLogin: isLogin);
+      default:
+        return 'Falha na autenticação: ${e.message ?? 'erro desconhecido'}.';
+    }
+  }
+
+  String _messageForStatus(DioException e, {required bool isLogin}) {
+    final status = e.response?.statusCode;
+    switch (status) {
+      case 401:
+        return 'E-mail ou senha incorretos.';
+      case 409:
+        return 'Já existe uma conta com esse e-mail.';
+      case 429:
+        final retryAfter = e.response?.headers.value('Retry-After');
+        final seconds = int.tryParse(retryAfter ?? '');
+        if (seconds != null) {
+          final minutes = (seconds / 60).ceil();
+          return 'Muitas tentativas. Tente novamente em '
+              '${minutes <= 1 ? 'cerca de 1 minuto' : 'cerca de $minutes minutos'}.';
+        }
+        return 'Muitas tentativas. Tente novamente mais tarde.';
+      case 422:
+        // Validação do Pydantic — a mensagem crua é uma estrutura aninhada,
+        // ilegível para o usuário. O que de fato pode falhar aqui é o
+        // formato do e-mail ou o mínimo de 8 caracteres da senha.
+        return isLogin
+            ? 'Dados inválidos. Confira o e-mail e a senha.'
+            : 'Dados inválidos. Use um e-mail válido e uma senha de pelo menos 8 caracteres.';
+      default:
+        final detail = _detailOf(e.response?.data);
+        if (detail != null) return detail;
+        return 'O servidor recusou a requisição (código $status).';
+    }
+  }
+
+  /// O FastAPI devolve o erro em `detail`, não em `message`.
+  String? _detailOf(dynamic data) {
+    if (data is! Map) return null;
+    final detail = data['detail'];
+    if (detail is String && detail.isNotEmpty) return detail;
+    return null;
+  }
 }
