@@ -27,7 +27,7 @@ class _ParticipantsScreenState extends State<ParticipantsScreen> {
   @override
   void initState() {
     super.initState();
-    _load();
+    _load().then((_) => _reconcile());
   }
 
   Future<void> _load() async {
@@ -37,6 +37,22 @@ class _ParticipantsScreenState extends State<ParticipantsScreen> {
       _participants = list;
       _loading = false;
     });
+  }
+
+  /// Acerta as contas com o servidor: primeiro as exclusões que ficaram
+  /// pendentes, depois o estado dos perfis que restaram.
+  ///
+  /// Roda depois do [_load] local, não no lugar dele: a tela abre na hora com
+  /// o que está no aparelho, e o selo de sincronizado se corrige sozinho
+  /// quando o servidor responde. Sem rede, nada muda.
+  ///
+  /// As exclusões vêm antes por serem as urgentes — cada uma pendente é uma
+  /// gravação de voz sobrando num servidor compartilhado.
+  Future<void> _reconcile() async {
+    await _service.retryPendingDeletions();
+    final list = await _service.reconcileVoiceProfiles();
+    if (!mounted) return;
+    setState(() => _participants = list);
   }
 
   void _addParticipant() {
@@ -115,6 +131,15 @@ class _ParticipantsScreenState extends State<ParticipantsScreen> {
           await _load();
           try {
             await _service.syncVoiceSample(updated);
+          } on VoiceSampleException catch (e) {
+            if (mounted) {
+              // Falha permanente (amostra recusada pelo servidor) merece a
+              // mensagem específica: "tente mais tarde" mandaria o usuário
+              // repetir algo que vai falhar igual.
+              _showSnack(e.permanent
+                  ? 'Amostra salva localmente, mas o servidor a recusou: ${e.message}'
+                  : 'Amostra salva localmente, mas não foi possível sincronizar com o servidor agora.');
+            }
           } catch (_) {
             if (mounted) {
               _showSnack(
@@ -162,7 +187,8 @@ class _ParticipantsScreenState extends State<ParticipantsScreen> {
       await _load();
       if (!remoteDeleted && mounted) {
         _showSnack(
-          'Participante removido do aparelho, mas o perfil de voz no servidor não pôde ser excluído agora.',
+          'Participante removido do aparelho. O perfil de voz no servidor '
+          'será excluído na próxima vez que esta tela abrir com conexão.',
         );
       }
     }
