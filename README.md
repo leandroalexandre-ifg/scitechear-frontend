@@ -67,7 +67,7 @@ lib/
   config.dart                     # URLs do backend (HTTP e WebSocket)
   core/theme/                     # cores e tema (dark) do app
   models/
-    user.dart                     # AppUser (id, nome, email, isAdmin)
+    user.dart                     # AppUser (id, nome, email)
     participant.dart              # Participante cadastrado + amostra de voz
     meeting.dart                  # Meeting (metadados de reunião enviada)
     meeting_result.dart           # TranscriptSegment, Question, MeetingResult (espelha o JSON do backend)
@@ -87,8 +87,9 @@ lib/
     background_service.dart        # foreground service (Android) + wakelock
     upload_service.dart            # upload multipart do áudio da reunião
     status_service.dart            # WebSocket/polling de status + busca do resultado
+    job_errors.dart                # tradução dos códigos de falha de job
     meeting_service.dart           # histórico local de reuniões
-    participant_service.dart       # cadastro de participantes + envio da amostra de voz
+    participant_service.dart       # cadastro de participantes (local + GET /participants) e amostras de voz
     offline_service.dart           # cache local de resultados + gerador do modo demo
   widgets/                         # componentes visuais reutilizáveis (glass card, botão gradiente, avatar)
 ```
@@ -161,10 +162,17 @@ GET /resultado/{job_id}       (409 enquanto o status não for "done")
                   generated_at, stub }
   }
 
+GET    /participants          (Bearer)
+       → [{ participant_id, name, sample_count, model_version, updated_at }]
+       Só do usuário autenticado, ordenado por nome e depois por id.
+       `name` pode ser null (é opcional no cadastro de amostra); o
+       participant_id vem sempre. Lista vazia para quem nunca cadastrou voz.
+
 POST   /participants/{participant_id}/voice-samples   (multipart: file, name?)
        413 acima de 25 MB (MAX_VOICE_SAMPLE_MB)
 GET    /participants/{participant_id}/voice-profile
        → { participant_id, exists, sample_count, model_version, updated_at }
+       O app não usa: a listagem acima resolve o mesmo em uma chamada.
 DELETE /participants/{participant_id}/voice-profile   → 204
 ```
 
@@ -180,25 +188,32 @@ estado *atual* a cada segundo, não a sequência de transições; estágios curt
 `queued → transcribing → diarizing → extracting → done` é normal e frequente.
 Nenhuma tela pode tratar um estado pulado como anomalia.
 
-### `participant_id` é gerado pelo app, e não é estável
+### `participant_id` é gerado pelo app — e o servidor é quem o preserva
 
 O id sai de `DateTime.now().microsecondsSinceEpoch` no cadastro do
-participante e mora só em `u<user_id>:registered_participants`, no
-`shared_preferences`. **Não sobrevive a reinstalar o app nem a trocar de
-aparelho**, e o backend não tem rota que liste participantes — as três rotas
-de `/participants` exigem que o chamador já saiba o id.
+participante e mora em `u<user_id>:registered_participants`, no
+`shared_preferences`, que **não sobrevive a reinstalar o app nem a trocar de
+aparelho**. Como o id é a única forma de alcançar um perfil de voz, perdê-lo
+deixaria a gravação invisível e inapagável no servidor.
 
-Um perfil de voz cujo id o app esqueceu fica invisível e inapagável no
-servidor. Por isso:
+Duas coisas impedem isso, e nenhuma das duas é opcional:
 
-- Quando o `DELETE .../voice-profile` falha, o id **não** é descartado junto
-  com o registro local: vai para `u<user_id>:pending_voice_profile_deletions`
-  e é retomado quando a tela de participantes abre com conexão.
-- Não gere `participant_id` em nenhum outro lugar do app, e não descarte um id
-  sem ter confirmação de que o perfil remoto não existe mais.
+- **`GET /participants` semeia o cadastro de volta.** Entrar numa conta com
+  cadastro local vazio traz os participantes do servidor, com a voz já pronta
+  (`ParticipantService.seedFromServerIfEmpty`, chamado pela tela inicial). O
+  usuário reencontra as pessoas em vez de recadastrá-las com ids novos — que
+  é o que órfãria os perfis antigos.
+- **Um id nunca é descartado sem confirmação.** Quando o
+  `DELETE .../voice-profile` falha, ele vai para
+  `u<user_id>:pending_voice_profile_deletions` e é retomado na próxima
+  abertura da tela de participantes. A retomada roda **antes** da listagem,
+  senão o perfil que o usuário mandou apagar voltaria como cadastro.
 
-A estabilidade entre instalações depende de uma rota de listagem por usuário,
-pendente no backend (ver `RESPOSTA_PARTICIPANT_IDS_2026-09-07.md`).
+Não gere `participant_id` em nenhum outro lugar do app.
+
+Um participante semeado tem perfil de voz no servidor e nenhum WAV local — a
+pergunta que a tela faz é `hasVoiceProfile`, não `hasVoiceSample`, senão ela
+manda o usuário regravar uma voz que já está cadastrada.
 
 ### Cadastro restrito a e-mails institucionais
 
@@ -248,7 +263,8 @@ arquivo do servidor dentro.
 | Escopo por usuário | jobs e vozes por `user_id` | derivado do token | ✅ em dia |
 | Resultado | schema completo | `meeting_result.dart` espelha | ✅ em dia |
 | Upload | `participants` como JSON | envia JSON | ✅ em dia |
-| Amostra de voz | endpoint dedicado | envia uma vez no cadastro, e confere o estado em `GET .../voice-profile` ao abrir a tela | ✅ em dia |
+| Amostra de voz | endpoint dedicado | envia uma vez no cadastro | ✅ em dia |
+| Cadastro de participantes | `GET /participants` | semeia o cadastro em instalação nova e reconcilia ao abrir a tela | ✅ em dia |
 | Push de progresso | `/ws` empurra até `done`/`error` (Fase 8, validada em 05/09/2026) | lê em laço, com polling como fallback obrigatório | ✅ em dia |
 | Histórico | `GET /meetings` | lista local em `shared_preferences` | divergente, migração acordada mas não agendada |
 | Dados no aparelho | escopados por `user_id` | chaves escopadas (`local_scope.dart`) | ✅ em dia |
