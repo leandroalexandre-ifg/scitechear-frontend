@@ -506,21 +506,60 @@ O artefato sai em `build/app/outputs/flutter-apk/app-release.apk`, para
 instalação manual (`adb install`, ou o arquivo entregue aos alunos com
 "fontes desconhecidas" habilitado).
 
-**Este APK é assinado com a chave de _debug_.** O projeto não tem
-`android/key.properties` nem keystore próprio, e
-`android/app/build.gradle.kts` ainda carrega o
-`signingConfig = signingConfigs.getByName("debug")` do template do Flutter.
-Para o piloto é aceitável — a distribuição é manual e fora da Play Store.
-**Não serve para publicação**, por três motivos que só aparecem depois:
+### Assinatura
 
-- a chave de debug é pública e comum a qualquer instalação do Flutter SDK,
-  então qualquer um consegue assinar um APK que o Android aceita como
-  atualização deste;
-- a Play Store recusa uploads assinados com ela;
-- trocar a chave depois **não** atualiza as instalações existentes: o
-  Android recusa a atualização e os alunos precisam desinstalar e
-  reinstalar, perdendo os dados locais do app.
+O APK é assinado com **keystore próprio** desde 21/09/2026. Antes disso ele
+saía com a chave de debug do Flutter SDK — ver "Migração da chave de debug",
+abaixo, que ainda afeta quem instalou o APK antigo.
 
-Antes de qualquer distribuição além deste piloto: gerar um keystore,
-guardá-lo fora do repositório e apontar um `signingConfig` de release
-para ele.
+A chave é RSA de 4096 bits, válida até **fevereiro de 2054**. A validade é
+longa de propósito: trocar a chave tem exatamente o custo que ela existe
+para evitar.
+
+#### Onde os arquivos estão — faça backup
+
+Nenhum dos dois está no repositório, e nenhum dos dois pode ser recuperado
+se for perdido:
+
+| Arquivo | Caminho | O que é |
+|---|---|---|
+| Keystore | `~/keystores/scitechear/scitechear-release.keystore` | A chave. Irrecuperável. |
+| Credenciais | `SciTech-frontend/android/key.properties` | Senhas e alias. Ignorado pelo git. |
+| Cópia de backup | `~/keystores/scitechear/key.properties.backup` | Cópia do anterior, para o backup ficar numa pasta só. |
+
+Fazer backup de `~/keystores/scitechear/` inteiro cobre os três. Guarde-o
+em pelo menos um lugar fora desta máquina.
+
+> **Perder o keystore é permanente e não tem conserto depois do fato.** Sem
+> ele, nenhuma build futura consegue atualizar as instalações existentes: o
+> Android recusa qualquer APK assinado por outra chave. A única saída seria
+> publicar um app novo e pedir a todo mundo que desinstale e reinstale,
+> perdendo os dados locais. Não há suporte, recuperação de senha nem
+> reemissão — a chave perdida é perdida.
+
+O `android/key.properties` também nunca deve ser commitado: além da senha,
+ele aponta o caminho do keystore. Ambos estão cobertos pelo `.gitignore` do
+projeto e pelo de `android/`.
+
+Se `key.properties` não existir (um clone limpo, por exemplo), a build
+**não falha** — cai na chave de debug e emite um aviso no log. Isso mantém
+`flutter run --release` funcionando para quem não tem a chave, mas significa
+que um APK gerado assim **não** serve para distribuir.
+
+#### Migração da chave de debug — afeta a turma
+
+Os APKs distribuídos antes de 21/09/2026 foram assinados com a chave de
+debug. O Android só aceita uma atualização assinada com a **mesma** chave da
+instalação existente, então:
+
+**Quem já tem o app instalado precisa desinstalar a versão antiga antes de
+instalar a nova.** Não é opcional e não há como contornar — a instalação vai
+falhar com um erro de assinatura conflitante (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`).
+Desinstalar apaga os dados locais do aparelho: sessão, histórico de reuniões
+em cache e cadastro de participantes. O cadastro de participantes volta
+sozinho no primeiro login (é semeado pelo `GET /participants`); a sessão
+exige entrar de novo.
+
+Vale comunicar isso à turma **antes** de enviar o APK novo. É a última vez
+que esse custo aparece: daqui em diante as atualizações usam a mesma chave e
+instalam por cima, preservando os dados.

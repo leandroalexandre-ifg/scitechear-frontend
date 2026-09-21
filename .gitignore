@@ -50,6 +50,11 @@ app.*.map.json
 # Local configuration
 android/local.properties
 
-# Key store files
+# Key store files — a chave de release e suas senhas NUNCA são versionadas.
+# Perder o keystore é irreversível: sem ele nenhuma atualização futura
+# consegue substituir as instalações existentes do app.
 *.jks
 *.keystore
+*.p12
+android/key.properties
+key.properties
