@@ -29,3 +29,9 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  # CA interna que assina o certificado do servidor de produção. O
+  # `dart:io` não lê o armazenamento de CAs do sistema, então ela
+  # precisa vir embutida na build (ver lib/services/tls.dart).
+  assets:
+    - assets/certs/scitechear-root-ca.crt

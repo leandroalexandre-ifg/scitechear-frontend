@@ -114,7 +114,19 @@ static const String backendWsUrl = String.fromEnvironment(
 
 - **Emulador Android**: `10.0.2.2` aponta para o `localhost` da máquina host
 - **Dispositivo físico**: use o túnel do `adb reverse` (ver a última seção) ou o IP da máquina na rede local
-- **Produção**: use o domínio com HTTPS/WSS
+- **Produção**: HTTPS/WSS contra o servidor implantado, sem porta explícita
+  (443 é a padrão dos dois esquemas):
+
+```bash
+flutter run -d <device-id> \
+  --dart-define=SCITECH_API_BASE_URL=https://<ip-do-servidor> \
+  --dart-define=SCITECH_WS_BASE_URL=wss://<ip-do-servidor>
+```
+
+Os defaults de `lib/config.dart` continuam sendo os de desenvolvimento: o
+endereço de produção existe só como `--dart-define`, nunca embutido como
+padrão. Ver ["Direto por HTTPS"](#direto-por-https-sem-túnel) para o que
+mais é preciso para esse endereço funcionar.
 
 ## Contrato da API
 
@@ -444,3 +456,65 @@ Duas consequências de tudo chegar como `127.0.0.1`:
 Para o roteiro do teste conjunto, ver `PREPARO_TESTE_CONJUNTO_APP.md` (lado do
 app) e o documento equivalente do backend (túnel, contas, `smoke_contrato` e
 journal).
+
+### Direto por HTTPS, sem túnel
+
+A porta 443 do NumbERS responde da internet pública, então o app pode falar
+com o servidor sem `adb reverse`, sem `ssh -L` e sem VPN:
+
+```bash
+flutter run -d <device-id> \
+  --dart-define=SCITECH_API_BASE_URL=https://<ip-do-servidor> \
+  --dart-define=SCITECH_WS_BASE_URL=wss://<ip-do-servidor>
+```
+
+O certificado é emitido por uma CA interna (Caddy Local Authority), que não
+está em nenhum armazenamento público de raízes. **O `dart:io` não consulta o
+armazenamento de CAs do sistema** — carrega o seu próprio conjunto, compilado
+na engine — então instalar a CA no aparelho não faz o app confiar nela. Por
+isso a CA vem embutida na build, em `assets/certs/`, e é carregada em
+`lib/services/tls.dart`, que monta um `SecurityContext` aplicado tanto aos
+clientes `Dio` quanto ao WebSocket.
+
+O certificado do servidor traz o IP do servidor como SAN do tipo `iPAddress`:
+conectar por IP funciona, por nome não. Para conferir a validade da cadeia a
+partir da CA embutida:
+
+```bash
+curl --cacert assets/certs/scitechear-root-ca.crt https://<ip-do-servidor>/health
+```
+
+Não há `network_security_config.xml` no projeto, e não é esquecimento: ele
+configura a pilha de rede do Android (Java), que nem o `dio` nem o
+`web_socket_channel` usam. Não teria efeito nenhum sobre o TLS do app.
+
+### APK de release para o piloto
+
+```bash
+flutter build apk --release \
+  --dart-define=SCITECH_API_BASE_URL=https://<ip-do-servidor> \
+  --dart-define=SCITECH_WS_BASE_URL=wss://<ip-do-servidor>
+```
+
+O artefato sai em `build/app/outputs/flutter-apk/app-release.apk`, para
+instalação manual (`adb install`, ou o arquivo entregue aos alunos com
+"fontes desconhecidas" habilitado).
+
+**Este APK é assinado com a chave de _debug_.** O projeto não tem
+`android/key.properties` nem keystore próprio, e
+`android/app/build.gradle.kts` ainda carrega o
+`signingConfig = signingConfigs.getByName("debug")` do template do Flutter.
+Para o piloto é aceitável — a distribuição é manual e fora da Play Store.
+**Não serve para publicação**, por três motivos que só aparecem depois:
+
+- a chave de debug é pública e comum a qualquer instalação do Flutter SDK,
+  então qualquer um consegue assinar um APK que o Android aceita como
+  atualização deste;
+- a Play Store recusa uploads assinados com ela;
+- trocar a chave depois **não** atualiza as instalações existentes: o
+  Android recusa a atualização e os alunos precisam desinstalar e
+  reinstalar, perdendo os dados locais do app.
+
+Antes de qualquer distribuição além deste piloto: gerar um keystore,
+guardá-lo fora do repositório e apontar um `signingConfig` de release
+para ele.

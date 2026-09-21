@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:dio/dio.dart';
+import 'package:dio/io.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../config.dart';
+import 'tls.dart';
 
 /// A sessão acabou e não foi possível renovar — o usuário precisa entrar de
 /// novo. Distinta de uma falha de rede: aqui o servidor respondeu, e a
@@ -70,11 +72,23 @@ class ApiClient {
   /// Cliente sem `Authorization` e sem renovação automática. Usado pelas
   /// rotas públicas de `/auth` e pelo próprio refresh — se o refresh
   /// passasse pelo interceptor, um 401 nele dispararia outro refresh.
-  final Dio public = Dio(BaseOptions(
+  /// `late` para ser construído na primeira chamada, não junto do
+  /// singleton: assim não depende de `AppTls.initialize()` já ter rodado no
+  /// instante em que alguém toca em `ApiClient.instance`.
+  late final Dio public = _build(Dio(BaseOptions(
     baseUrl: AppConfig.backendBaseUrl,
     connectTimeout: const Duration(seconds: 15),
     receiveTimeout: const Duration(seconds: 30),
-  ));
+  )));
+
+  /// Liga o cliente à CA interna. Todo `Dio` do app passa por aqui — o
+  /// `dart:io` não confia nela por conta própria (ver `tls.dart`).
+  static Dio _build(Dio dio) {
+    dio.httpClientAdapter = IOHttpClientAdapter(
+      createHttpClient: AppTls.newHttpClient,
+    );
+    return dio;
+  }
 
   /// Cria um cliente autenticado. Cada serviço pede o seu porque os timeouts
   /// diferem muito (o upload espera minutos; o polling de status, segundos) —
@@ -83,11 +97,11 @@ class ApiClient {
     Duration connectTimeout = const Duration(seconds: 15),
     Duration receiveTimeout = const Duration(seconds: 30),
   }) {
-    final dio = Dio(BaseOptions(
+    final dio = _build(Dio(BaseOptions(
       baseUrl: AppConfig.backendBaseUrl,
       connectTimeout: connectTimeout,
       receiveTimeout: receiveTimeout,
-    ));
+    )));
     dio.interceptors.add(InterceptorsWrapper(
       onRequest: (options, handler) async {
         await _ensureFresh();

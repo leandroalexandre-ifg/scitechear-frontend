@@ -4,11 +4,16 @@ import 'package:flutter/material.dart';
 import 'core/theme/app_theme.dart';
 import 'services/api_client.dart';
 import 'services/auth_service.dart';
+import 'services/tls.dart';
 import 'screens/auth_screen.dart';
 import 'screens/home_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Antes de qualquer coisa que fale com a rede: `auth.initialize()` já
+  // tenta renovar a sessão, e sem a CA interna carregada essa primeira
+  // chamada falharia no handshake.
+  await AppTls.initialize();
   final auth = AuthService();
   await auth.initialize();
   runApp(ReunioesApp(authService: auth));

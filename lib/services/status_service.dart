@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:dio/dio.dart';
+import 'package:web_socket_channel/io.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 import '../config.dart';
 import '../models/meeting_result.dart';
 import 'api_client.dart';
+import 'tls.dart';
 
 /// Acompanha o progresso de um job e busca o resultado final.
 ///
@@ -82,9 +84,13 @@ class StatusService {
         startPolling();
         return;
       }
-      _channel = WebSocketChannel.connect(
+      // `IOWebSocketChannel`, e não `WebSocketChannel.connect`, porque só
+      // ele aceita um `customClient` — é por onde a CA interna entra. O
+      // `wss://` do servidor falharia no handshake sem isso (ver `tls.dart`).
+      _channel = IOWebSocketChannel.connect(
         Uri.parse('${AppConfig.backendWsUrl}/ws/$jobId'
             '?token=${Uri.encodeQueryComponent(token)}'),
+        customClient: AppTls.newHttpClient(),
       );
       // A conexão do WebSocket é assíncrona; `ready` só completa (ou lança)
       // depois do handshake, então é aqui que falhas de conexão aparecem.
