@@ -10,6 +10,13 @@ dos dois `--dart-define` que já existiam. O que muda é o que responde do outro
 lado de `127.0.0.1:8000`, e o app não sabe a diferença — que é justamente o
 motivo de o túnel SSH ter sido a escolha.
 
+> **Atualização — 21/09/2026.** Existe agora uma segunda rota, mais curta:
+> o servidor responde na porta 443 da internet pública, então o aparelho
+> pode falar direto com ele por HTTPS/WSS, **sem túnel, sem `adb reverse` e
+> sem VPN**. O roteiro abaixo continua válido para as duas — muda só o
+> comando da seção 1 e o pré-requisito de rede. A rota por túnel segue útil
+> para testar contra um backend que não está publicado.
+
 ## Estado — 07/09/2026
 
 **Os passos 3 a 7 do roteiro passaram**, contra a API implantada com o worker
@@ -27,8 +34,21 @@ válido — o roteiro é para repetir, não para arquivar.
 
 ## 1. Comando
 
-Com a VPN ligada, o túnel de pé e o `adb reverse` aplicado (passos 1–4 do
-documento do backend), com o aparelho conectado:
+**Rota direta (preferida).** Basta o aparelho ter internet — nenhum
+pré-requisito de túnel ou VPN:
+
+```bash
+flutter run -d <device-id> \
+  --dart-define=SCITECH_API_BASE_URL=https://<ip-do-servidor> \
+  --dart-define=SCITECH_WS_BASE_URL=wss://<ip-do-servidor>
+```
+
+A confiança no certificado da CA interna vem embutida na build; não é
+preciso instalar nada no aparelho (ver seção 4.6 de
+[`FRONTEND_ARCHITECTURE.md`](FRONTEND_ARCHITECTURE.md)).
+
+**Rota por túnel.** Com a VPN ligada, o túnel de pé e o `adb reverse`
+aplicado (passos 1–4 do documento do backend), com o aparelho conectado:
 
 ```bash
 flutter run -d <device-id> \
@@ -150,6 +170,13 @@ antes de um upload multipart (o caminho que existe justamente para não ter que
 reenviar um corpo já consumido), WebSocket com `?token=` atravessando dois
 túneis, e o escopo por usuário com duas contas de verdade no mesmo aparelho.
 
-O que ele não prova: nada sobre rede real. Continua tudo em loopback através
-de um túnel, e a tela nunca vai ter visto TLS. HTTPS ponta a ponta é outra
-rodada.
+O que ele não prova, **quando rodado pela rota do túnel**: nada sobre rede
+real. Ali continua tudo em loopback, e a tela nunca terá visto TLS.
+
+Pela rota direta isso deixou de valer — o tráfego é HTTPS/WSS de verdade
+sobre a internet pública. A pilha TLS do app foi validada em 21/09/2026
+(seção "Validação ponta a ponta" de
+[`FRONTEND_ARCHITECTURE.md`](FRONTEND_ARCHITECTURE.md)), mas o que foi
+exercitado ali foi o handshake, não a jornada completa. Rodar este roteiro
+inteiro pela rota direta é o que fecha essa lacuna — e é a razão de o
+documento continuar servindo.

@@ -73,7 +73,10 @@ lib/
     meeting.dart                # Meeting (title, history)
     meeting_result.dart         # TranscriptSegment, Question, MeetingResult
   services/
-    auth_service.dart           # login/signup (local mock)
+    api_client.dart             # JWT session, token refresh, authenticated Dio clients
+    auth_service.dart           # login/signup against the backend `/auth`
+    tls.dart                    # SecurityContext with the bundled internal CA
+    local_scope.dart            # per-user prefixes for on-device storage
     audio_service.dart          # WAV recording via `record`
     background_service.dart     # foreground service (Android) + wakelock
     upload_service.dart         # multipart upload

@@ -113,7 +113,7 @@ static const String backendWsUrl = String.fromEnvironment(
 ```
 
 - **Emulador Android**: `10.0.2.2` aponta para o `localhost` da máquina host
-- **Dispositivo físico**: use o túnel do `adb reverse` (ver a última seção) ou o IP da máquina na rede local
+- **Dispositivo físico**: contra o servidor de produção, use o endereço HTTPS abaixo (não precisa de túnel nem VPN); contra um backend local, o túnel do `adb reverse` (ver a última seção) ou o IP da máquina na rede local
 - **Produção**: HTTPS/WSS contra o servidor implantado, sem porta explícita
   (443 é a padrão dos dois esquemas):
 
@@ -382,7 +382,7 @@ O fluxo de telas e serviços, em mais detalhe:
 |---|---|
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Contexto geral, máquina de estados do job, sequência ponta a ponta, contrato de dados |
 | [`docs/FRONTEND_ARCHITECTURE.md`](docs/FRONTEND_ARCHITECTURE.md) | Telas, serviços, modelos, sessão e escopo, validação ponta a ponta |
-| [`docs/TESTE_CONJUNTO.md`](docs/TESTE_CONJUNTO.md) | Rodar o app contra o backend implantado: túnel, roteiro, o que observar |
+| [`docs/TESTE_CONJUNTO.md`](docs/TESTE_CONJUNTO.md) | Rodar o app contra o backend implantado: as duas rotas (HTTPS direto ou túnel), roteiro, o que observar |
 
 ## Rodando em dispositivo físico (Android)
 
@@ -421,6 +421,11 @@ reconectar.
 
 ### Contra o backend implantado (NumbERS), em vez do local
 
+> Esta é a rota **por túnel**, que exige VPN. Para falar com o servidor de
+> produção não é mais preciso nada disso — ver
+> ["Direto por HTTPS"](#direto-por-https-sem-túnel), logo abaixo. O túnel
+> continua útil para testar contra um backend que ainda não está publicado.
+
 Troca os passos 5 e 6 acima por um túnel SSH; **o app não muda**, continua
 apontando para `127.0.0.1:8000`:
 
@@ -453,8 +458,9 @@ Duas consequências de tudo chegar como `127.0.0.1`:
   ou VPN. Confira o `/health` e o `adb reverse --list` antes de investigar o
   app — o `ssh -N -L` cai em silêncio quando a VPN oscila.
 
-Para o roteiro do teste conjunto, ver `PREPARO_TESTE_CONJUNTO_APP.md` (lado do
-app) e o documento equivalente do backend (túnel, contas, `smoke_contrato` e
+Para o roteiro do teste conjunto, ver
+[`docs/TESTE_CONJUNTO.md`](docs/TESTE_CONJUNTO.md) (lado do app) e o
+documento equivalente do backend (túnel, contas, `smoke_contrato` e
 journal).
 
 ### Direto por HTTPS, sem túnel

@@ -522,6 +522,61 @@ Duas responsabilidades relacionadas, mas distintas:
   deveria saber, por que está sendo chamada. Isso mantém a política de uso
   do modo demo centralizada e fácil de auditar.
 
+### 4.6. `tls.dart` — confiança TLS
+
+O servidor de produção usa um certificado assinado por uma CA interna
+(Caddy Local Authority), que não está em nenhum armazenamento público de
+raízes. Fazer o app confiar nela custou uma lição que vale ficar registrada,
+porque a solução "óbvia" não funciona.
+
+**O `dart:io` não consulta o armazenamento de CAs do sistema.** Ele carrega
+o seu próprio conjunto de raízes, compilado no BoringSSL que vem dentro do
+motor do Flutter. Duas consequências que derrubam os dois primeiros
+palpites de qualquer um:
+
+- **Instalar a CA no aparelho não adianta.** O Android passa a confiar nela,
+  o navegador do aparelho passa a confiar nela, e o app continua recusando —
+  não é esse o armazenamento que ele lê.
+- **`network_security_config.xml` também não adianta**, e por isso ele não
+  existe neste projeto. Aquele arquivo configura a pilha de rede **do
+  Android**, em Java. Nem o `dio` nem o `web_socket_channel` passam por ela:
+  os dois falam por `dart:io`. Chegou a ser adicionado e foi removido por
+  completo — não é que estivesse redundante com a solução real, é que não
+  tinha efeito nenhum. Vale contra a intuição comum de que ele cobre o HTTP
+  e só deixa o WebSocket de fora: num app Flutter ele não cobre nenhum dos
+  dois.
+
+A solução é montar a confiança dentro do `dart:io`. `AppTls.initialize()`
+lê o certificado embutido como asset (`assets/certs/scitechear-root-ca.crt`)
+e monta um `SecurityContext(withTrustedRoots: true)` — a CA interna é
+**somada** às raízes públicas, não as substitui, então o app continua capaz
+de falar com qualquer HTTPS normal. É chamado no início de `main()`, antes
+de `AuthService`, que já tenta renovar a sessão na partida.
+
+Esse contexto precisa alcançar os **dois** caminhos de rede, e eles são
+configurados de formas diferentes:
+
+| Caminho | Como o contexto entra |
+|---|---|
+| Os três clientes `Dio` | `IOHttpClientAdapter(createHttpClient: …)` |
+| WebSocket | `IOWebSocketChannel.connect(…, customClient: …)` |
+
+A troca de `WebSocketChannel.connect` por `IOWebSocketChannel.connect` não é
+cosmética: a fábrica genérica não aceita cliente customizado, e é a única
+variante por onde a CA consegue entrar. Um app que só ajustasse o `Dio`
+teria HTTP funcionando e WebSocket quebrado — falha que apareceria bem
+depois, na tela de processamento, disfarçada de queda de rede.
+
+Cada chamada de `AppTls.newHttpClient()` devolve um `HttpClient` novo, e não
+um compartilhado: quem o recebe assume a posse e o fecha quando termina, de
+modo que uma instância única derrubaria os outros junto. O que é
+compartilhado é o `SecurityContext`, que é o caro de montar.
+
+O certificado do servidor traz o IP como SAN do tipo `iPAddress` — conectar
+por IP funciona, por nome não. A raiz embutida vale até 2036. O risco de a
+CA ser regenerada do lado do servidor (o que invalidaria a raiz embutida e
+exigiria uma build nova) está registrado no runbook do backend.
+
 ## 5. Modelos de dados
 
 ### 5.1. `participant.dart`
@@ -598,6 +653,20 @@ rodando no mesmo computador que roda o emulador. Para um dispositivo
 físico conectado à mesma rede, use o IP local da máquina que roda o
 backend (por exemplo, obtido com `ipconfig getifaddr en0` em um Mac).
 
+Contra o servidor de produção, HTTPS e WSS sem porta explícita (443 é a
+padrão dos dois esquemas):
+
+```bash
+flutter run \
+  --dart-define=SCITECH_API_BASE_URL=https://<ip-do-servidor> \
+  --dart-define=SCITECH_WS_BASE_URL=wss://<ip-do-servidor>
+```
+
+Os defaults de `config.dart` continuam sendo os de desenvolvimento: o
+endereço de produção existe só como `--dart-define`, nunca embutido como
+padrão. O que mais é preciso para esse endereço funcionar — a CA interna
+embutida na build — está na seção 4.6.
+
 O modo de demonstração é configurado da mesma forma, como uma flag de
 compilação e não como um interruptor em tempo de execução:
 
@@ -667,14 +736,61 @@ logins seguidos no mesmo aparelho, com o `LocalScope` trocando de prefixo
 duas vezes e nenhum dado atravessando. É o cenário que motivou o escopo por
 usuário, e era o único ainda não visto acontecer.
 
+**21/09/2026 — primeira vez que o app falou TLS com o servidor.** Contra a
+porta 443, sem túnel e sem VPN, em runtime Android real (emulador API 36 —
+não só no macOS, onde a pilha TLS é outra):
+
+| Verificado | Resultado |
+|---|---|
+| A CA embutida carrega do asset no Android | ✅ |
+| `POST /auth/login` pelo `Dio` real do app atravessa o TLS | ✅ (422 do servidor) |
+| Handshake WSS pelo `IOWebSocketChannel` do app | ✅ |
+| **Controle:** o mesmo servidor **sem** a CA embutida | ✅ rejeitado |
+
+A última linha é a que dá valor às outras três. Sem ela, as três primeiras
+seriam compatíveis com o emulador já confiar no certificado por algum outro
+motivo, e não provariam nada sobre o `SecurityContext`. Com ela, a diferença
+entre conectar e ser recusado é exatamente a CA embutida.
+
+Uma armadilha encontrada nessa rodada, que vale para qualquer verificação de
+rede futura: **`flutter test` instala um `HttpOverrides` que responde 400 a
+tudo, sem ir à rede.** Uma primeira tentativa de validação rodou por ali e
+"passou" contra um servidor que nunca foi contatado. Verificação de TLS ou
+de rede real precisa anular `HttpOverrides.global`, ou rodar fora do
+binding de teste — e, pelo mesmo motivo, não faz sentido guardar esse tipo
+de teste na suíte.
+
 **Ainda não exercitado:** reunião longa (>10 min), a detecção de truncamento
-do gravador, e a semeadura do cadastro após reinstalar. Nenhum deles falhou —
-nenhum deles chegou a ser tentado.
+do gravador, a semeadura do cadastro após reinstalar, e a jornada completa
+do usuário (login real, upload, WebSocket até `done`) sobre a rota HTTPS —
+o que foi validado nela é a pilha TLS, não o ciclo inteiro. Nenhum deles
+falhou — nenhum deles chegou a ser tentado.
 
 ### Contra o backend implantado
 
-O app **não muda**: continua apontando para `127.0.0.1:8000`. O que muda é o
-que existe do outro lado dessa porta.
+Há duas rotas, e a primeira passou a ser a preferida.
+
+**Direto por HTTPS (atual).** A porta 443 do servidor responde da internet
+pública, então o aparelho fala com ele sem `adb reverse`, sem `ssh -L` e
+**sem VPN**:
+
+```
+aparelho  --HTTPS/WSS (internet pública, 443)-->  NumbERS
+```
+
+```bash
+flutter run -d <device-id> \
+  --dart-define=SCITECH_API_BASE_URL=https://<ip-do-servidor> \
+  --dart-define=SCITECH_WS_BASE_URL=wss://<ip-do-servidor>
+```
+
+A confiança no certificado vem da CA embutida na build (seção 4.6). É a rota
+usada para o APK do piloto, porque é a única que funciona num aparelho que
+não está na mesa de ninguém.
+
+**Por túnel (anterior, ainda útil).** Serve para testar contra um backend
+que não está publicado — uma branch do servidor, por exemplo. Aqui o app
+aponta para `127.0.0.1:8000` e não sabe o que existe do outro lado:
 
 ```
 aparelho  --adb reverse (USB)-->  máquina de dev  --ssh -L (VPN)-->  NumbERS
@@ -683,9 +799,8 @@ aparelho  --adb reverse (USB)-->  máquina de dev  --ssh -L (VPN)-->  NumbERS
 
 O caminho é HTTP puro e isso não é descuido: aparelho→máquina é USB,
 máquina→servidor é o próprio SSH, e o HTTP só existe em loopback dentro de
-cada máquina. O proxy TLS interno ficou de fora porque o `dart:io` usa o
-armazenamento de CAs do **sistema**, não o do usuário — instalar a CA no
-aparelho não faz o app confiar nela, e usá-la exigiria embuti-la na build.
+cada máquina. O que essa rota **não** exercita é a pilha TLS do app — para
+isso, é a rota direta.
 
 O roteiro completo, com o que observar em cada passo, está em
 [`TESTE_CONJUNTO.md`](TESTE_CONJUNTO.md).
@@ -711,14 +826,22 @@ backend, com refresh rotacionado, renovação proativa e escopo por usuário no
 armazenamento local (seções 4.0 e 4.0.1). O que era "um passo necessário
 antes de qualquer uso além de testes internos" foi dado.
 
+**HTTPS ponta a ponta saiu de "fora da V1".** O app fala TLS com o servidor,
+por HTTPS e WSS na porta 443, sem túnel e sem VPN (seções 4.6 e 9). A nota
+antiga desta seção dizia que usar o proxy TLS interno "exigiria embutir a CA
+na build" — e é exatamente isso que foi feito. O que ela tratava como
+impedimento era, na verdade, a solução; o que de fato não funcionaria era o
+`network_security_config.xml`, que num app Flutter não cobre nem o HTTP nem
+o WebSocket.
+
 O que continua fora da V1:
 
 - **Histórico vindo do servidor.** `GET /meetings`, `PATCH` e `DELETE` já
   existem no backend, com os campos que faltavam (`participants` com
   `{id, name}`, `error`). A migração está destravada e acordada, mas fica
   para depois da validação ponta a ponta — um bug de cada vez.
-- **HTTPS ponta a ponta.** O caminho validado é loopback através de túnel
-  (ver seção 9). O app nunca falou TLS com o servidor, e o `dart:io` não
-  herda a CA instalada no aparelho: usar o proxy TLS interno exigiria
-  embutir a CA na build.
 - **iOS**, que compila mas não é exercitado.
+- **Assinatura de release própria.** O APK do piloto é assinado com a chave
+  de debug do Flutter SDK. Aceitável para distribuição manual fora da Play
+  Store, e documentado no README com o que isso impede depois — em especial
+  que trocar a chave não atualiza as instalações existentes.
